@@ -336,6 +336,11 @@ class DocAccessible : public HyperTextAccessibleWrap,
   void ContentInserted(nsIContent* aStartChildNode, nsIContent* aEndChildNode);
 
   /**
+   * @see nsAccessibilityService::ScheduleAccessibilitySubtreeUpdate
+   */
+  void ScheduleTreeUpdate(nsIContent* aContent);
+
+  /**
    * Update the tree on content removal.
    */
   void ContentRemoved(LocalAccessible* aAccessible);
@@ -491,12 +496,20 @@ class DocAccessible : public HyperTextAccessibleWrap,
   void ProcessInvalidationList();
 
   /**
+   * Process mPendingUpdates
+   */
+  void ProcessPendingUpdates();
+
+  /**
    * Called from NotificationController to process this doc's
    * mMaybeBoundsChanged list. Sends a cache update for each acc in this
    * doc whose bounds have changed since reflow.
    */
   void ProcessBoundsChanged();
 
+  /**
+   * Only works in content process documents.
+   */
   bool IsAccessibleBeingMoved(LocalAccessible* aAcc) {
     return mMovedAccessibles.Contains(aAcc);
   }
@@ -719,6 +732,11 @@ class DocAccessible : public HyperTextAccessibleWrap,
       mARIAOwnsHash;
 
   /**
+   * Keeps a list of pending subtrees to update post-refresh.
+   */
+  nsTArray<RefPtr<nsIContent>> mPendingUpdates;
+
+  /**
    * Used to process notification from core and accessible events.
    */
   RefPtr<NotificationController> mNotificationController;
@@ -729,8 +747,8 @@ class DocAccessible : public HyperTextAccessibleWrap,
   void SetRoleMapEntryForDoc(dom::Element* aElement);
 
   /**
-   * This must be called whenever an Accessible is moved if the cache is
-   * enabled. It keeps track of Accessibles moved during this tick.
+   * This must be called whenever an Accessible is moved in a content process.
+   * It keeps track of Accessibles moved during this tick.
    */
   void TrackMovedAccessible(LocalAccessible* aAcc);
 
@@ -740,11 +758,11 @@ class DocAccessible : public HyperTextAccessibleWrap,
   DocAccessibleChild* mIPCDoc;
 
   nsTHashSet<RefPtr<LocalAccessible>> mMaybeBoundsChanged;
-  // A set of Accessibles moved during this tick. Only used if the cache is
-  // enabled.
+  // A set of Accessibles moved during this tick. Only used in content
+  // processes.
   nsTHashSet<RefPtr<LocalAccessible>> mMovedAccessibles;
-  // A set of Accessibles inserted during this tick. Only used if the cache is
-  // enabled. This is needed to prevent insertions + moves of the same
+  // A set of Accessibles inserted during this tick. Only used in content
+  // processes. This is needed to prevent insertions + moves of the same
   // Accessible in the same tick from being tracked as moves.
   nsTHashSet<RefPtr<LocalAccessible>> mInsertedAccessibles;
 };

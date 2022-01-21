@@ -46,7 +46,6 @@
 #include "js/ProfilingFrameIterator.h"
 #include "memory_hooks.h"
 #include "mozilla/ArrayUtils.h"
-#include "mozilla/Atomics.h"
 #include "mozilla/AutoProfilerLabel.h"
 #include "mozilla/ExtensionPolicyService.h"
 #include "mozilla/extensions/WebExtensionPolicy.h"
@@ -194,6 +193,8 @@ using ThreadRegistry = mozilla::profiler::ThreadRegistry;
 
 LazyLogModule gProfilerLog("prof");
 
+mozilla::Atomic<int, mozilla::MemoryOrdering::Relaxed> gSkipSampling;
+
 #if defined(GP_OS_android)
 class GeckoJavaSampler
     : public java::GeckoJavaSampler::Natives<GeckoJavaSampler> {
@@ -275,7 +276,7 @@ static uint32_t AvailableFeatures() {
 static constexpr uint32_t DefaultFeatures() {
   return ProfilerFeature::Java | ProfilerFeature::JS | ProfilerFeature::Leaf |
          ProfilerFeature::StackWalk | ProfilerFeature::CPUUtilization |
-         ProfilerFeature::Screenshots;
+         ProfilerFeature::Screenshots | ProfilerFeature::ProcessCPU;
 }
 
 // Extra default features when MOZ_PROFILER_STARTUP is set (even if not
@@ -569,6 +570,18 @@ ProfileChunkedBuffer& profiler_get_core_buffer() {
   return CorePS::CoreBuffer();
 }
 
+void locked_profiler_add_sampled_counter(PSLockRef aLock,
+                                         BaseProfilerCount* aCounter) {
+  CorePS::AppendCounter(aLock, aCounter);
+}
+
+void locked_profiler_remove_sampled_counter(PSLockRef aLock,
+                                            BaseProfilerCount* aCounter) {
+  // Note: we don't enforce a final sample, though we could do so if the
+  // profiler was active
+  CorePS::RemoveCounter(aLock, aCounter);
+}
+
 class SamplerThread;
 
 static SamplerThread* NewSamplerThread(PSLockRef aLock, uint32_t aGeneration,
@@ -678,6 +691,9 @@ class ActivePS {
           CorePS::CoreBuffer().SetChunkManager(mProfileBufferChunkManager);
           return CorePS::CoreBuffer();
         }()),
+        mMaybeProcessCPUCounter(ProfilerFeature::HasProcessCPU(aFeatures)
+                                    ? new ProcessCPUCounter(aLock)
+                                    : nullptr),
         // The new sampler thread doesn't start sampling immediately because the
         // main loop within Run() is blocked until this function's caller
         // unlocks gPSMutex.
@@ -689,12 +705,7 @@ class ActivePS {
                                ? new ProfilerIOInterposeObserver()
                                : nullptr),
         mIsPaused(false),
-        mIsSamplingPaused(false)
-#if defined(GP_OS_linux) || defined(GP_OS_freebsd)
-        ,
-        mWasSamplingPaused(false)
-#endif
-  {
+        mIsSamplingPaused(false) {
     // Deep copy and lower-case aFilters.
     MOZ_ALWAYS_TRUE(mFilters.resize(aFilterCount));
     MOZ_ALWAYS_TRUE(mFiltersLowered.resize(aFilterCount));
@@ -727,6 +738,9 @@ class ActivePS {
   }
 
   ~ActivePS() {
+    MOZ_ASSERT(
+        !mMaybeProcessCPUCounter,
+        "mMaybeProcessCPUCounter should have been deleted before ~ActivePS()");
 #if !defined(RELEASE_OR_BETA)
     if (mInterposeObserver) {
       // We need to unregister the observer on the main thread, because that's
@@ -789,6 +803,12 @@ class ActivePS {
 
   [[nodiscard]] static SamplerThread* Destroy(PSLockRef aLock) {
     MOZ_ASSERT(sInstance);
+    if (sInstance->mMaybeProcessCPUCounter) {
+      locked_profiler_remove_sampled_counter(
+          aLock, sInstance->mMaybeProcessCPUCounter);
+      delete sInstance->mMaybeProcessCPUCounter;
+      sInstance->mMaybeProcessCPUCounter = nullptr;
+    }
     auto samplerThread = sInstance->mSamplerThread;
     delete sInstance;
     sInstance = nullptr;
@@ -1070,6 +1090,26 @@ class ActivePS {
     }
   }
 
+  // This is a counter to collect process CPU utilization during profiling.
+  // It cannot be a raw `ProfilerCounter` because we need to manually add/remove
+  // it while the profiler lock is already held.
+  class ProcessCPUCounter final : public BaseProfilerCount {
+   public:
+    explicit ProcessCPUCounter(PSLockRef aLock)
+        : BaseProfilerCount("processCPU", &mCounter, nullptr, "CPU",
+                            "Process CPU utilization") {
+      // Adding on construction, so it's ready before the sampler starts.
+      locked_profiler_add_sampled_counter(aLock, this);
+      // Note: Removed from ActivePS::Destroy, because a lock is needed.
+    }
+
+    void Add(int64_t aNumber) { mCounter += aNumber; }
+
+   private:
+    ProfilerAtomicSigned mCounter;
+  };
+  PS_GET(ProcessCPUCounter*, MaybeProcessCPUCounter);
+
   PS_GET_AND_SET(bool, IsPaused)
 
   // True if sampling is paused (though generic `SetIsPaused()` or specific
@@ -1083,10 +1123,6 @@ class ActivePS {
     MOZ_ASSERT(sInstance);
     sInstance->mIsSamplingPaused = aIsSamplingPaused;
   }
-
-#if defined(GP_OS_linux) || defined(GP_OS_freebsd)
-  PS_GET_AND_SET(bool, WasSamplingPaused)
-#endif
 
   static void DiscardExpiredDeadProfiledThreads(PSLockRef) {
     MOZ_ASSERT(sInstance);
@@ -1297,6 +1333,9 @@ class ActivePS {
   // We are removing them when we ensure that we won't need them anymore.
   Vector<RefPtr<PageInformation>> mDeadProfiledPages;
 
+  // Used to collect process CPU utilization values, if the feature is on.
+  ProcessCPUCounter* mMaybeProcessCPUCounter;
+
   // The current sampler thread. This class is not responsible for destroying
   // the SamplerThread object; the Destroy() method returns it so the caller
   // can destroy it.
@@ -1310,12 +1349,6 @@ class ActivePS {
 
   // Is the profiler periodic sampling paused?
   bool mIsSamplingPaused;
-
-#if defined(GP_OS_linux) || defined(GP_OS_freebsd)
-  // Used to record whether the sampler was paused just before forking. False
-  // at all times except just before/after forking.
-  bool mWasSamplingPaused;
-#endif
 
   // Optional startup profile thread array from BaseProfiler.
   UniquePtr<char[]> mBaseProfileThreads;
@@ -3029,10 +3062,9 @@ static void locked_profiler_stream_json_for_this_process(
       // tid that doesn't conflict with it for the Java side. So we just use 0.
       // Once we add support for profiling of other java threads, we'll have to
       // get their thread id and name via JNI.
-      const ThreadRegistrationInfo threadInfo{"AndroidUI (JVM)",
-                                              ProfilerThreadId{}, false,
-                                              CorePS::ProcessStartTime()};
-      ProfiledThreadData profiledThreadData(threadInfo, nullptr);
+      ProfiledThreadData profiledThreadData(
+          ThreadRegistrationInfo{"AndroidUI (JVM)", ProfilerThreadId{}, false,
+                                 CorePS::ProcessStartTime()});
       profiledThreadData.StreamJSON(
           javaBuffer, nullptr, aWriter, CorePS::ProcessName(aLock),
           CorePS::ETLDplus1(aLock), CorePS::ProcessStartTime(), aSinceTime,
@@ -3323,6 +3355,10 @@ static RunningTimes GetThreadRunningTimesDiff(
 static void DiscardSuspendedThreadRunningTimes(
     PSLockRef aLock,
     ThreadRegistration::UnlockedRWForLockedProfiler& aThreadData);
+
+// Platform-specific function that retrieves process CPU measurements.
+static RunningTimes GetProcessRunningTimesDiff(
+    PSLockRef aLock, RunningTimes& aPreviousRunningTimesToBeUpdated);
 
 // Template function to be used by `GetThreadRunningTimesDiff()` (unless some
 // platform has a better way to achieve this).
@@ -3618,6 +3654,10 @@ void SamplerThread::Run() {
   // Will be kept between collections, to know what each collection does.
   auto previousState = localBuffer.GetState();
 
+  // This will be filled at every loop, to be used by the next loop to compute
+  // the CPU utilization between samples.
+  RunningTimes processRunningTimes;
+
   // This will be set inside the loop, from inside the lock scope, to capture
   // all callbacks added before that, but none after the lock is released.
   UniquePtr<PostSamplingCallbackListItem> postSamplingCallbacks;
@@ -3670,10 +3710,22 @@ void SamplerThread::Run() {
 
       TimeStamp expiredMarkersCleaned = TimeStamp::Now();
 
-      if (!ActivePS::IsSamplingPaused(lock)) {
+      if (int(gSkipSampling) <= 0 && !ActivePS::IsSamplingPaused(lock)) {
         double sampleStartDeltaMs =
             (sampleStart - CorePS::ProcessStartTime()).ToMilliseconds();
         ProfileBuffer& buffer = ActivePS::Buffer(lock);
+
+        // Before sampling counters, update the process CPU counter if active.
+        if (ActivePS::ProcessCPUCounter* processCPUCounter =
+                ActivePS::MaybeProcessCPUCounter(lock);
+            processCPUCounter) {
+          RunningTimes processRunningTimesDiff =
+              GetProcessRunningTimesDiff(lock, processRunningTimes);
+          Maybe<uint64_t> cpu = processRunningTimesDiff.GetJsonThreadCPUDelta();
+          if (cpu) {
+            processCPUCounter->Add(static_cast<int64_t>(*cpu));
+          }
+        }
 
         // handle per-process generic counters
         const Vector<BaseProfilerCount*>& counters = CorePS::Counters(lock);
@@ -4521,12 +4573,9 @@ static ProfilingStack* locked_register_thread(
       ThreadRegistry::OffThreadRef::RWFromAnyThreadWithLock
           lockedRWFromAnyThread = aOffThreadRef.LockedRWFromAnyThread();
 
-      nsCOMPtr<nsIEventTarget> eventTarget =
-          lockedRWFromAnyThread->GetEventTarget();
       ProfiledThreadData* profiledThreadData = ActivePS::AddLiveProfiledThread(
-          aLock,
-          MakeUnique<ProfiledThreadData>(
-              aOffThreadRef.UnlockedConstReaderCRef().Info(), eventTarget));
+          aLock, MakeUnique<ProfiledThreadData>(
+                     aOffThreadRef.UnlockedConstReaderCRef().Info()));
       lockedRWFromAnyThread->SetProfilingFeaturesAndData(
           threadProfilingFeatures, profiledThreadData, aLock);
 
@@ -5356,9 +5405,8 @@ static void locked_profiler_start(PSLockRef aLock, PowerOfTwo32 aCapacity,
     if (threadProfilingFeatures != ThreadProfilingFeatures::NotProfiled) {
       ThreadRegistry::OffThreadRef::RWFromAnyThreadWithLock lockedThreadData =
           offThreadRef.LockedRWFromAnyThread();
-      nsCOMPtr<nsIEventTarget> eventTarget = lockedThreadData->GetEventTarget();
       ProfiledThreadData* profiledThreadData = ActivePS::AddLiveProfiledThread(
-          aLock, MakeUnique<ProfiledThreadData>(info, eventTarget));
+          aLock, MakeUnique<ProfiledThreadData>(info));
       lockedThreadData->SetProfilingFeaturesAndData(threadProfilingFeatures,
                                                     profiledThreadData, aLock);
       if (ActivePS::FeatureJS(aLock)) {
@@ -5829,15 +5877,13 @@ void profiler_write_active_configuration(JSONWriter& aWriter) {
 void profiler_add_sampled_counter(BaseProfilerCount* aCounter) {
   DEBUG_LOG("profiler_add_sampled_counter(%s)", aCounter->mLabel);
   PSAutoLock lock;
-  CorePS::AppendCounter(lock, aCounter);
+  locked_profiler_add_sampled_counter(lock, aCounter);
 }
 
 void profiler_remove_sampled_counter(BaseProfilerCount* aCounter) {
   DEBUG_LOG("profiler_remove_sampled_counter(%s)", aCounter->mLabel);
   PSAutoLock lock;
-  // Note: we don't enforce a final sample, though we could do so if the
-  // profiler was active
-  CorePS::RemoveCounter(lock, aCounter);
+  locked_profiler_remove_sampled_counter(lock, aCounter);
 }
 
 ProfilingStack* profiler_register_thread(const char* aName,

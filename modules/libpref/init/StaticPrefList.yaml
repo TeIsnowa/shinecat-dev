@@ -1432,6 +1432,14 @@
   value: true
   mirror: always
 
+# Temporary pref which makes certain ServiceWorkers be isolated in special
+# processes instead of within a the normal web/webIsolated process based on
+# the URI.  Entries are separated by commas
+- name: browser.tabs.remote.serviceWorkerIsolationList
+  type: String
+  value: ""
+  mirror: never
+
 # When this pref is enabled, opaque response is only allowed to enter the
 # content process if it's a response for media (audio, image, video), CSS, or
 # JavaScript.
@@ -3503,6 +3511,46 @@
   mirror: always
   do_not_use_directly: true
 
+# The amount of snapshot peak usage which is attempted to be pre-incremented
+# during snapshot creation.
+- name: dom.storage.snapshot_peak_usage.initial_preincrement
+  type: RelaxedAtomicUint32
+  value: 16384
+  mirror: always
+
+# The amount of snapshot peak usage which is attempted to be pre-incremented
+# during snapshot creation if the LocalStorage usage was already close to the
+# limit (a fallback for dom.storage.snapshot_peak_usage.initial_preincrement).
+- name: dom.storage.snapshot_peak_usage.reduced_initial_preincrement
+  type: RelaxedAtomicUint32
+  value: 4096
+  mirror: always
+
+# The amount of snapshot peak usage which is attempted to be pre-incremented
+# beyond the specific values which are subsequently requested after snapshot
+# creation.
+- name: dom.storage.snapshot_peak_usage.gradual_preincrement
+  type: RelaxedAtomicUint32
+  value: 4096
+  mirror: always
+
+# The amount of snapshot peak usage which is attempted to be pre-incremented
+# beyond the specific values which are subsequently requested after snapshot
+# creation if the LocalStorage total usage was already close to the limit
+# (a fallback for dom.storage.snapshot_peak_usage.gradual_preincrement).
+- name: dom.storage.snapshot_peak_usage.reduced_gradual_preincrement
+  type: RelaxedAtomicUint32
+  value: 1024
+  mirror: always
+
+# How long between a snapshot becomes idle and when we actually finish the
+# snapshot. This preference is only used when "dom.storage.snapshot_reusing"
+# is true.
+- name: dom.storage.snapshot_idle_timeout_ms
+  type: uint32_t
+  value: 5000
+  mirror: always
+
 # Is support for Storage test APIs enabled?
 - name: dom.storage.testing
   type: bool
@@ -3535,6 +3583,12 @@
   mirror: always
 
 - name: dom.streams.expose.ReadableStreamDefaultReader
+  type: RelaxedAtomicBool
+  value: false
+  mirror: always
+
+# DON'T enable, there are known issues!
+- name: dom.streams.byte_streams
   type: RelaxedAtomicBool
   value: false
   mirror: always
@@ -3935,7 +3989,11 @@
 # Maximum value of navigator.hardwareConcurrency.
 - name: dom.maxHardwareConcurrency
   type: RelaxedAtomicUint32
+#ifdef NIGHTLY_BUILD
   value: 128
+#else
+  value: 16
+#endif
   mirror: always
 
 # W3C pointer events draft.
@@ -7749,8 +7807,14 @@
   value: false
   mirror: always
 
-# Enables the Show Password button inside a <input type=password>.
-- name: layout.forms.input-type-show-password-button.enabled
+# Enables the Reveal Password button inside a <input type=password>.
+- name: layout.forms.reveal-password-button.enabled
+  type: bool
+  value: false
+  mirror: always
+
+# Enables the Reveal Password context-menu entry.
+- name: layout.forms.reveal-password-context-menu.enabled
   type: bool
   value: false
   mirror: always
@@ -8193,7 +8257,7 @@
   type: bool
   mirror: always
 #if defined(XP_LINUX) && !defined(MOZ_WIDGET_ANDROID)
-  value: true
+  value: false
 #elif defined(XP_WIN) && !defined(_ARM64_)
   value: true
 #elif defined(XP_MACOSX)
@@ -12588,6 +12652,16 @@
   type: int32_t
   value: 2
   mirror: always
+
+# Whether to try to use XDG portal for settings / look-and-feel information.
+# https://flatpak.github.io/xdg-desktop-portal/#gdbus-org.freedesktop.portal.Settings
+#  - 0: never
+#  - 1: always
+#  - 2: auto
+- name: widget.use-xdg-desktop-portal.settings
+  type: int32_t
+  value: 2
+  mirror: always
 #endif
 
 #ifdef XP_WIN
@@ -12605,7 +12679,7 @@
 
 - name: widget.windows.window_occlusion_tracking.enabled
   type: bool
-  value: @IS_EARLY_BETA_OR_EARLIER@
+  value: true
   mirror: always
 
 - name: widget.windows.window_occlusion_tracking_display_state.enabled

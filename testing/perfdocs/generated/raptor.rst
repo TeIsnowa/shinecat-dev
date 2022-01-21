@@ -1212,6 +1212,7 @@ Standard benchmarks are third-party tests (i.e. Speedometer) that we have integr
    * **lower is better**: true
    * **page cycles**: 20
    * **page timeout**: 2700000
+   * **preferences**: {"media.autoplay.default": 0, "media.autoplay.ask-permission": false, "media.autoplay.blocking_policy": 0, "media.autoplay.block-webaudio": false, "media.allowed-to-play.enabled": true, "media.block-autoplay-until-in-foreground": false}
    * **subtest lower is better**: true
    * **subtest unit**: score
    * **test url**: `<https://yttest.prod.mozaws.net/2020/main.html?test_type=playbackperf-sfr-h264-test&tests=18&raptor=true&muted=true&command=run&exclude=1,2>`__
@@ -1230,6 +1231,7 @@ Standard benchmarks are third-party tests (i.e. Speedometer) that we have integr
    * **lower is better**: true
    * **page cycles**: 20
    * **page timeout**: 2700000
+   * **preferences**: {"media.autoplay.default": 0, "media.autoplay.ask-permission": false, "media.autoplay.blocking_policy": 0, "media.autoplay.block-webaudio": false, "media.allowed-to-play.enabled": true, "media.block-autoplay-until-in-foreground": false}
    * **subtest lower is better**: true
    * **subtest unit**: score
    * **test url**: `<https://yttest.prod.mozaws.net/2020/main.html?test_type=playbackperf-hfr-test&raptor=true&tests=46&muted=true&command=run&exclude=1,2>`__
@@ -1248,7 +1250,7 @@ Standard benchmarks are third-party tests (i.e. Speedometer) that we have integr
    * **lower is better**: true
    * **page cycles**: 20
    * **page timeout**: 2700000
-   * **preferences**: {"full-screen-api.allow-trusted-requests-only": false, "full-screen-api.warning.timeout": 0}
+   * **preferences**: {"media.autoplay.default": 0, "media.autoplay.ask-permission": false, "media.autoplay.blocking_policy": 0, "media.autoplay.block-webaudio": false, "media.allowed-to-play.enabled": true, "media.block-autoplay-until-in-foreground": false, "full-screen-api.allow-trusted-requests-only": false, "full-screen-api.warning.timeout": 0}
    * **subtest lower is better**: true
    * **subtest unit**: score
    * **test url**: `<https://yttest.prod.mozaws.net/2020/main.html?test_type=playbackperf-sfr-h264-test&tests=18&raptor=true&muted=true&command=run&fullscreen=true&exclude=1,2>`__
@@ -1267,7 +1269,7 @@ Standard benchmarks are third-party tests (i.e. Speedometer) that we have integr
    * **lower is better**: true
    * **page cycles**: 20
    * **page timeout**: 2700000
-   * **preferences**: {"full-screen-api.allow-trusted-requests-only": false, "full-screen-api.warning.timeout": 0}
+   * **preferences**: {"media.autoplay.default": 0, "media.autoplay.ask-permission": false, "media.autoplay.blocking_policy": 0, "media.autoplay.block-webaudio": false, "media.allowed-to-play.enabled": true, "media.block-autoplay-until-in-foreground": false, "full-screen-api.allow-trusted-requests-only": false, "full-screen-api.warning.timeout": 0}
    * **subtest lower is better**: true
    * **subtest unit**: score
    * **test url**: `<https://yttest.prod.mozaws.net/2020/main.html?test_type=playbackperf-hfr-test&raptor=true&tests=46&muted=true&command=run&fullscreen=true&exclude=1,2>`__
@@ -1286,6 +1288,7 @@ Standard benchmarks are third-party tests (i.e. Speedometer) that we have integr
    * **lower is better**: true
    * **page cycles**: 20
    * **page timeout**: 2700000
+   * **preferences**: {"media.autoplay.default": 0, "media.autoplay.ask-permission": false, "media.autoplay.blocking_policy": 0, "media.autoplay.block-webaudio": false, "media.allowed-to-play.enabled": true, "media.block-autoplay-until-in-foreground": false}
    * **subtest lower is better**: true
    * **subtest unit**: score
    * **test url**: `<https://yttest.prod.mozaws.net/2020/main.html?test_type=playbackperf-sfr-vp9-test&raptor=true&tests=18&muted=true&command=run&exclude=1,2>`__
@@ -1304,6 +1307,7 @@ Standard benchmarks are third-party tests (i.e. Speedometer) that we have integr
    * **lower is better**: true
    * **page cycles**: 20
    * **page timeout**: 2700000
+   * **preferences**: {"media.autoplay.default": 0, "media.autoplay.ask-permission": false, "media.autoplay.blocking_policy": 0, "media.autoplay.block-webaudio": false, "media.allowed-to-play.enabled": true, "media.block-autoplay-until-in-foreground": false}
    * **subtest lower is better**: true
    * **subtest unit**: score
    * **test url**: `<https://yttest.prod.mozaws.net/2020/main.html?test_type=playbackperf-hfr-test&raptor=true&tests=14&muted=true&command=run&exclude=1,2>`__
@@ -1322,7 +1326,7 @@ Standard benchmarks are third-party tests (i.e. Speedometer) that we have integr
    * **lower is better**: true
    * **page cycles**: 20
    * **page timeout**: 2700000
-   * **preferences**: {"full-screen-api.allow-trusted-requests-only": false, "full-screen-api.warning.timeout": 0}
+   * **preferences**: {"media.autoplay.default": 0, "media.autoplay.ask-permission": false, "media.autoplay.blocking_policy": 0, "media.autoplay.block-webaudio": false, "media.allowed-to-play.enabled": true, "media.block-autoplay-until-in-foreground": false, "full-screen-api.allow-trusted-requests-only": false, "full-screen-api.warning.timeout": 0}
    * **subtest lower is better**: true
    * **subtest unit**: score
    * **test url**: `<https://yttest.prod.mozaws.net/2020/main.html?test_type=playbackperf-sfr-vp9-test&raptor=true&tests=18&muted=true&command=run&fullscreen=true&exclude=1,2>`__
@@ -1341,7 +1345,7 @@ Standard benchmarks are third-party tests (i.e. Speedometer) that we have integr
    * **lower is better**: true
    * **page cycles**: 20
    * **page timeout**: 2700000
-   * **preferences**: {"full-screen-api.allow-trusted-requests-only": false, "full-screen-api.warning.timeout": 0}
+   * **preferences**: {"media.autoplay.default": 0, "media.autoplay.ask-permission": false, "media.autoplay.blocking_policy": 0, "media.autoplay.block-webaudio": false, "media.allowed-to-play.enabled": true, "media.block-autoplay-until-in-foreground": false, "full-screen-api.allow-trusted-requests-only": false, "full-screen-api.warning.timeout": 0}
    * **subtest lower is better**: true
    * **subtest unit**: score
    * **test url**: `<https://yttest.prod.mozaws.net/2020/main.html?test_type=playbackperf-hfr-test&raptor=true&tests=14&muted=true&command=run&fullscreen=true&exclude=1,2>`__
@@ -14047,8 +14051,10 @@ Tests for page-load performance. The links direct to the actual websites that ar
    * **page cycles**: 25
    * **page timeout**: 60000
    * **playback**: mitmproxy
-   * **playback pageset manifest**: mitm5-linux-firefox-imgur.manifest
-   * **playback version**: 5.1.1
+   * **playback pageset manifest**: mitm7-linux-firefox-imgur.manifest
+   * **playback version**: 7.0.4
+   * **preferences**: {"media.autoplay.default": 5, "media.autoplay.ask-permission": true, "media.autoplay.blocking_policy": 1, "media.autoplay.block-webaudio": true, "media.allowed-to-play.enabled": false, "media.block-autoplay-until-in-foreground": true}
+   * **secondary url**: `<https://imgur.com/gallery/L13Ci>`__
    * **test url**: `<https://imgur.com/gallery/m5tYJL6>`__
    * **type**: pageload
    * **unit**: ms

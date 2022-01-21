@@ -387,7 +387,7 @@ GCRuntime::GCRuntime(JSRuntime* rt)
       perZoneGCEnabled(TuningDefaults::PerZoneGCEnabled),
       numActiveZoneIters(0),
       cleanUpEverything(false),
-      grayBitsValid(false),
+      grayBitsValid(true),
       majorGCTriggerReason(JS::GCReason::NO_REASON),
       minorGCNumber(0),
       majorGCNumber(0),
@@ -1417,12 +1417,13 @@ JS_PUBLIC_API void JS::SetCreateGCSliceBudgetCallback(
   cx->runtime()->gc.createBudgetCallback = cb;
 }
 
+void TimeBudget::setDeadlineFromNow() { deadline = ReallyNow() + budget; }
+
 SliceBudget::SliceBudget(TimeBudget time, InterruptRequestFlag* interrupt)
     : budget(TimeBudget(time)),
       interruptRequested(interrupt),
       counter(StepsPerExpensiveCheck) {
-  budget.as<TimeBudget>().deadline =
-      ReallyNow() + TimeDuration::FromMilliseconds(timeBudget());
+  budget.as<TimeBudget>().setDeadlineFromNow();
 }
 
 SliceBudget::SliceBudget(WorkBudget work)

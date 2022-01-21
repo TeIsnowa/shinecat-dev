@@ -95,7 +95,6 @@
 #include "mozilla/dom/PerformanceStorage.h"
 #include "mozilla/Telemetry.h"
 #include "AlternateServices.h"
-#include "InterceptedChannel.h"
 #include "NetworkMarker.h"
 #include "nsIHttpPushListener.h"
 #include "nsIX509Cert.h"
@@ -551,6 +550,15 @@ nsresult nsHttpChannel::MaybeUseHTTPSRRForUpgrade(bool aShouldUpgrade,
   }
 
   auto shouldSkipUpgradeWithHTTPSRR = [&]() -> bool {
+    // Skip using HTTPS RR to upgrade when this is not a top-level load and the
+    // loading principal is http.
+    if ((mLoadInfo->GetExternalContentPolicyType() !=
+         ExtContentPolicy::TYPE_DOCUMENT) &&
+        (mLoadInfo->GetLoadingPrincipal() &&
+         mLoadInfo->GetLoadingPrincipal()->SchemeIs("http"))) {
+      return true;
+    }
+
     nsAutoCString uriHost;
     mURI->GetAsciiHost(uriHost);
 
@@ -1879,29 +1887,6 @@ void nsHttpChannel::ProcessSSLInformation() {
     }
   }
 
-  // Send (SHA-1) signature algorithm errors to the web console
-  nsCOMPtr<nsIX509Cert> cert;
-  securityInfo->GetServerCert(getter_AddRefs(cert));
-  if (cert) {
-    UniqueCERTCertificate nssCert(cert->GetCert());
-    if (nssCert) {
-      SECOidTag tag = SECOID_GetAlgorithmTag(&nssCert->signature);
-      LOG(("Checking certificate signature: The OID tag is %i [this=%p]\n", tag,
-           this));
-      // Check to see if the signature is sha-1 based.
-      // Not including checks for SEC_OID_ISO_SHA1_WITH_RSA_SIGNATURE
-      // from http://tools.ietf.org/html/rfc2437#section-8 since I
-      // can't see reference to it outside this spec
-      if (tag == SEC_OID_PKCS1_SHA1_WITH_RSA_ENCRYPTION ||
-          tag == SEC_OID_ANSIX9_DSA_SIGNATURE_WITH_SHA1_DIGEST ||
-          tag == SEC_OID_ANSIX962_ECDSA_SHA1_SIGNATURE) {
-        nsString consoleErrorTag = u"SHA1Sig"_ns;
-        nsString consoleErrorMessage = u"SHA-1 Signature"_ns;
-        Unused << AddSecurityMessage(consoleErrorTag, consoleErrorMessage);
-      }
-    }
-  }
-
   uint16_t tlsVersion;
   nsresult rv = securityInfo->GetProtocolVersion(&tlsVersion);
   if (NS_SUCCEEDED(rv) &&
@@ -2376,9 +2361,10 @@ nsresult nsHttpChannel::ContinueProcessResponse3(nsresult rv) {
       }
       break;
 
+    case 408:
     case 425:
     case 429:
-      // Do not cache 425 and 429.
+      // Do not cache 408, 425 and 429.
       CloseCacheEntry(false);
       [[fallthrough]];  // process normally
     default:

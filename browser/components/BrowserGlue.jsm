@@ -2265,6 +2265,23 @@ BrowserGlue.prototype = {
     _checkGPCPref();
   },
 
+  _monitorPrivacySegmentationPref() {
+    const PREF_ENABLED = "browser.privacySegmentation.enabled";
+    const EVENT_CATEGORY = "privacy_segmentation";
+
+    let checkPrivacySegmentationPref = () => {
+      let isEnabled = Services.prefs.getBoolPref(PREF_ENABLED, false);
+      Services.telemetry.recordEvent(
+        EVENT_CATEGORY,
+        isEnabled ? "enable" : "disable",
+        "pref"
+      );
+    };
+
+    Services.telemetry.setEventRecordingEnabled(EVENT_CATEGORY, true);
+    Services.prefs.addObserver(PREF_ENABLED, checkPrivacySegmentationPref);
+  },
+
   // All initial windows have opened.
   _onWindowsRestored: function BG__onWindowsRestored() {
     if (this._windowsWereRestored) {
@@ -2345,6 +2362,7 @@ BrowserGlue.prototype = {
       this._monitorTranslationsPref();
     }
     this._monitorGPCPref();
+    this._monitorPrivacySegmentationPref();
   },
 
   /**
@@ -3205,8 +3223,9 @@ BrowserGlue.prototype = {
         // An import operation is about to run.
         let bookmarksUrl = null;
         if (restoreDefaultBookmarks) {
-          // User wants to restore bookmarks.html file from default profile folder
-          bookmarksUrl = "chrome://browser/locale/bookmarks.html";
+          // User wants to restore the default set of bookmarks shipped with the
+          // browser, those that new profiles start with.
+          bookmarksUrl = "chrome://browser/content/default-bookmarks.html";
         } else if (await IOUtils.exists(BookmarkHTMLUtils.defaultPath)) {
           bookmarksUrl = PathUtils.toFileURI(BookmarkHTMLUtils.defaultPath);
         }
