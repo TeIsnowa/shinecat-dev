@@ -460,6 +460,17 @@ async function waitForPaused(dbg, url) {
   await waitForSelectedSource(dbg, url);
 }
 
+/**
+ * Waits for the debugger to resume
+ *
+ * @memberof mochitest/waits
+ * @param {Objeect} dbg
+ * @static
+ */
+function waitForResumed(dbg) {
+  return waitForState(dbg, state => !dbg.selectors.getIsCurrentThreadPaused());
+}
+
 function waitForInlinePreviews(dbg) {
   return waitForState(dbg, () => dbg.selectors.getSelectedInlinePreviews());
 }
@@ -759,9 +770,9 @@ async function stepOut(dbg) {
 async function resume(dbg) {
   const pauseLine = getVisibleSelectedFrameLine(dbg);
   info(`Resuming from ${pauseLine}`);
-  const onResumed = waitForActive(dbg);
-  await dbg.actions.resume(getThreadContext(dbg));
-  await onResumed;
+  const onResumed = waitForResumed(dbg);
+  await dbg.actions.resume();
+  return onResumed;
 }
 
 function deleteExpression(dbg, input) {
@@ -1050,10 +1061,6 @@ async function togglePauseOnExceptions(
     pauseOnExceptions,
     pauseOnCaughtExceptions
   );
-}
-
-function waitForActive(dbg) {
-  return waitForState(dbg, state => !dbg.selectors.getIsCurrentThreadPaused());
 }
 
 // Helpers
@@ -2181,6 +2188,54 @@ async function setLogPoint(dbg, index, value) {
   const onBreakpointSet = waitForDispatch(dbg.store, "SET_BREAKPOINT");
   await typeInPanel(dbg, value);
   await onBreakpointSet;
+}
+
+/**
+ * Instantiate a HTTP Server that serves files from a given test folder.
+ * The test folder should be made of multiple sub folder named: v1, v2, v3,...
+ * We will serve the content from one of these sub folder
+ * and switch to the next one, each time `httpServer.switchToNextVersion()`
+ * is called.
+ *
+ * @return Object Test server with two functions:
+ *   - urlFor(path)
+ *     Returns the absolute url for a given file.
+ *   - switchToNextVersion() 
+ *     Start serving files from the next available sub folder.
+ */
+function createVersionizedHttpTestServer(testFolderName) {
+  const httpServer = createTestHTTPServer();
+
+  let currentVersion = 1;
+
+  httpServer.registerPrefixHandler("/", async (request, response) => {
+    response.processAsync();
+    response.setStatusLine(request.httpVersion, 200, "OK");
+    if (request.path.endsWith(".js")) {
+      response.setHeader("Content-Type", "application/javascript");
+    } else if (request.path.endsWith(".js.map")) {
+      response.setHeader("Content-Type", "application/json");
+    }
+    if (request.path == "/" || request.path == "/index.html") {
+      response.setHeader("Content-Type", "text/html");
+    }
+    const url = URL_ROOT + `examples/${testFolderName}/v${currentVersion}${request.path}`;
+    info("[test-http-server] serving: " + url);
+    const content = await fetch(url);
+    const text = await content.text();
+    response.write(text);
+    response.finish();
+  });
+
+  return {
+    switchToNextVersion() {
+      currentVersion++;
+    },
+    urlFor(path) {
+      const port = httpServer.identity.primaryPort;
+      return `http://localhost:${port}/${path}`;
+    },
+  };
 }
 
 // This module is also loaded for Browser Toolbox tests, within the browser toolbox process

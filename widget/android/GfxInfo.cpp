@@ -594,6 +594,11 @@ nsresult GfxInfo::GetFeatureStatusImpl(
       const bool isPowerVrG6110 =
           mGLStrings->Renderer().Find("PowerVR Rogue G6110",
                                       /* ignoreCase */ true) >= 0;
+
+      const bool isVivanteGC7000UL =
+          mGLStrings->Renderer().Find("Vivante GC7000UL",
+                                      /* ignoreCase */ true) >= 0;
+
       if (isMali4xx) {
         // Mali 4xx does not support GLES 3.
         *aStatus = nsIGfxInfo::FEATURE_BLOCKED_DEVICE;
@@ -602,6 +607,10 @@ nsresult GfxInfo::GetFeatureStatusImpl(
         // Blocked on PowerVR Rogue G6110 due to bug 1742986 and bug 1717863.
         *aStatus = nsIGfxInfo::FEATURE_BLOCKED_DEVICE;
         aFailureId = "FEATURE_FAILURE_POWERVR_G6110";
+      } else if (isVivanteGC7000UL) {
+        // Blocked on Vivante GC7000UL due to bug 1719327.
+        *aStatus = nsIGfxInfo::FEATURE_BLOCKED_DEVICE;
+        aFailureId = "FEATURE_FAILURE_VIVANTE_GC7000UL";
       } else {
         *aStatus = nsIGfxInfo::FEATURE_ALLOW_QUALIFIED;
       }
@@ -650,6 +659,23 @@ nsresult GfxInfo::GetFeatureStatusImpl(
       if (isMaliT) {
         *aStatus = nsIGfxInfo::FEATURE_BLOCKED_DEVICE;
         aFailureId = "FEATURE_FAILURE_BUG_1689064";
+      } else {
+        *aStatus = nsIGfxInfo::FEATURE_STATUS_OK;
+      }
+      return NS_OK;
+    }
+
+    if (aFeature == FEATURE_WEBRENDER_PARTIAL_PRESENT) {
+      // Block partial present on some devices due to rendering issues.
+      // On Mali-Txxx due to bug 1680087 and bug 1707815.
+      // On Adreno 3xx GPUs due to bug 1695771.
+      const bool isMaliT =
+          mGLStrings->Renderer().Find("Mali-T", /*ignoreCase*/ true) >= 0;
+      const bool isAdreno3xx = mGLStrings->Renderer().Find(
+                                   "Adreno (TM) 3", /*ignoreCase*/ true) >= 0;
+      if (isMaliT || isAdreno3xx) {
+        *aStatus = nsIGfxInfo::FEATURE_BLOCKED_DEVICE;
+        aFailureId = "FEATURE_FAILURE_BUG_1680087_1695771_1707815";
       } else {
         *aStatus = nsIGfxInfo::FEATURE_STATUS_OK;
       }

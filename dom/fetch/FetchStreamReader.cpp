@@ -291,6 +291,11 @@ FetchStreamReader::OnOutputStreamReady(nsIAsyncOutputStream* aStream) {
 
   ReadableStreamDefaultReaderRead(aes.cx(), MOZ_KnownLive(mReader), readRequest,
                                   rv);
+
+  // We report the (potential) JS Exception via the AutoEntryScript above, as
+  // was done in the JS Streams implementation as well.
+  rv.WouldReportJSException();
+
   if (NS_WARN_IF(rv.Failed())) {
     // Let's close the stream.
     CloseAndRelease(aes.cx(), NS_ERROR_DOM_INVALID_STATE_ERR);
@@ -320,7 +325,8 @@ FetchStreamReader::OnOutputStreamReady(nsIAsyncOutputStream* aStream) {
 }
 
 void FetchStreamReader::ResolvedCallback(JSContext* aCx,
-                                         JS::Handle<JS::Value> aValue) {
+                                         JS::Handle<JS::Value> aValue,
+                                         ErrorResult& aRv) {
   if (mStreamClosed) {
     return;
   }
@@ -418,7 +424,8 @@ nsresult FetchStreamReader::WriteBuffer() {
 }
 
 void FetchStreamReader::RejectedCallback(JSContext* aCx,
-                                         JS::Handle<JS::Value> aValue) {
+                                         JS::Handle<JS::Value> aValue,
+                                         ErrorResult& aRv) {
   ReportErrorToConsole(aCx, aValue);
   CloseAndRelease(aCx, NS_ERROR_FAILURE);
 }

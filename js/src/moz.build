@@ -438,6 +438,7 @@ UNIFIED_SOURCES += [
     "vm/SourceHook.cpp",
     "vm/Stack.cpp",
     "vm/StaticStrings.cpp",
+    "vm/StencilCache.cpp",
     "vm/StencilObject.cpp",
     "vm/StringType.cpp",
     "vm/SymbolType.cpp",
@@ -452,6 +453,7 @@ UNIFIED_SOURCES += [
     "vm/UsageStatistics.cpp",
     "vm/Value.cpp",
     "vm/Warnings.cpp",
+    "vm/Watchtower.cpp",
     "vm/WellKnownAtom.cpp",
     "vm/WindowProxy.cpp",
     "vm/Xdr.cpp",
@@ -625,6 +627,9 @@ selfhosted_inputs = [
     if CONFIG["JS_HAS_INTL_API"]
     else []
 )
+
+if CONFIG["ENABLE_RECORD_TUPLE"]:
+    selfhosted_inputs += ["builtin/Tuple.js"]
 
 # Prepare self-hosted JS code for embedding
 GeneratedFile(

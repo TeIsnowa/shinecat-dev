@@ -57,7 +57,6 @@
 #include "mozilla/dom/ServiceWorkerBinding.h"
 #include "mozilla/dom/ServiceWorkerGlobalScopeBinding.h"
 #include "mozilla/dom/WorkerCommon.h"
-#include "mozilla/dom/WorkerPrivate.h"
 #include "mozilla/dom/WorkerRef.h"
 #include "mozilla/dom/WorkerScope.h"
 #include "mozilla/extensions/ExtensionBrowser.h"
@@ -117,11 +116,13 @@ class ExtendableEventKeepAliveHandler final
   /**
    * PromiseNativeHandler interface
    */
-  void ResolvedCallback(JSContext* aCx, JS::Handle<JS::Value> aValue) override {
+  void ResolvedCallback(JSContext* aCx, JS::Handle<JS::Value> aValue,
+                        ErrorResult& aRv) override {
     RemovePromise(Resolved);
   }
 
-  void RejectedCallback(JSContext* aCx, JS::Handle<JS::Value> aValue) override {
+  void RejectedCallback(JSContext* aCx, JS::Handle<JS::Value> aValue,
+                        ErrorResult& aRv) override {
     RemovePromise(Rejected);
   }
 
@@ -1344,7 +1345,8 @@ void FetchEventOp::GetRequestURL(nsAString& aOutRequestURL) {
 }
 
 void FetchEventOp::ResolvedCallback(JSContext* aCx,
-                                    JS::Handle<JS::Value> aValue) {
+                                    JS::Handle<JS::Value> aValue,
+                                    ErrorResult& aRv) {
   MOZ_ASSERT(IsCurrentThreadRunningWorker());
   MOZ_ASSERT(mRespondWithClosure);
   MOZ_ASSERT(!mRespondWithPromiseHolder.IsEmpty());
@@ -1523,7 +1525,8 @@ void FetchEventOp::ResolvedCallback(JSContext* aCx,
 }
 
 void FetchEventOp::RejectedCallback(JSContext* aCx,
-                                    JS::Handle<JS::Value> aValue) {
+                                    JS::Handle<JS::Value> aValue,
+                                    ErrorResult& aRv) {
   MOZ_ASSERT(IsCurrentThreadRunningWorker());
   MOZ_ASSERT(mRespondWithClosure);
   MOZ_ASSERT(!mRespondWithPromiseHolder.IsEmpty());

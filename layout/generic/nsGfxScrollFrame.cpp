@@ -9,7 +9,6 @@
 #include "nsGfxScrollFrame.h"
 
 #include "nsIXULRuntime.h"
-#include "ActiveLayerTracker.h"
 #include "base/compiler_specific.h"
 #include "DisplayItemClip.h"
 #include "Layers.h"
@@ -1484,7 +1483,8 @@ void nsHTMLScrollFrame::Reflow(nsPresContext* aPresContext,
       (didHaveHScrollbar != state.mShowHScrollbar ||
        didHaveVScrollbar != state.mShowVScrollbar ||
        didOnlyHScrollbar != mHelper.mOnlyNeedHScrollbarToScrollVVInsideLV ||
-       didOnlyVScrollbar != mHelper.mOnlyNeedVScrollbarToScrollVVInsideLV)) {
+       didOnlyVScrollbar != mHelper.mOnlyNeedVScrollbarToScrollVVInsideLV) &&
+      PresShell()->IsVisualViewportOffsetSet()) {
     // Removing layout/classic scrollbars can make a previously valid vvoffset
     // invalid. For example, if we are zoomed in on an overflow hidden document
     // and then zoom back out, when apz reaches the initial resolution (ie 1.0)
@@ -4488,23 +4488,25 @@ bool ScrollFrameHelper::DecideScrollableLayer(
         content, &displayPort,
         DisplayPortOptions().With(DisplayportRelativeTo::ScrollFrame));
 
+    auto OverrideDirtyRect = [&](const nsRect& aRect) {
+      *aDirtyRect = aRect;
+      if (aDirtyRectHasBeenOverriden) {
+        *aDirtyRectHasBeenOverriden = true;
+      }
+    };
+
     if (usingDisplayPort) {
       // Override the dirty rectangle if the displayport has been set.
       *aVisibleRect = displayPort;
-      if (!aBuilder->IsPartialUpdate() || aBuilder->InInvalidSubtree() ||
+      if (aBuilder->IsReusingStackingContextItems() ||
+          !aBuilder->IsPartialUpdate() || aBuilder->InInvalidSubtree() ||
           mOuter->IsFrameModified()) {
-        *aDirtyRect = displayPort;
-        if (aDirtyRectHasBeenOverriden) {
-          *aDirtyRectHasBeenOverriden = true;
-        }
+        OverrideDirtyRect(displayPort);
       } else if (mOuter->HasOverrideDirtyRegion()) {
         nsRect* rect = mOuter->GetProperty(
             nsDisplayListBuilder::DisplayListBuildingDisplayPortRect());
         if (rect) {
-          *aDirtyRect = *rect;
-          if (aDirtyRectHasBeenOverriden) {
-            *aDirtyRectHasBeenOverriden = true;
-          }
+          OverrideDirtyRect(*rect);
         }
       }
     } else if (mIsRoot) {
@@ -5846,7 +5848,6 @@ void ScrollFrameHelper::FireScrollEvent() {
 
   mProcessingScrollEvent = true;
 
-  ActiveLayerTracker::SetCurrentScrollHandlerFrame(mOuter);
   WidgetGUIEvent event(true, eScroll, nullptr);
   nsEventStatus status = nsEventStatus_eIgnore;
   // Fire viewport scroll events at the document (where they
@@ -5865,7 +5866,6 @@ void ScrollFrameHelper::FireScrollEvent() {
     event.mFlags.mBubbles = false;
     EventDispatcher::Dispatch(content, presContext, &event, nullptr, &status);
   }
-  ActiveLayerTracker::SetCurrentScrollHandlerFrame(nullptr);
 }
 
 void ScrollFrameHelper::PostScrollEvent(bool aDelayed) {
@@ -6108,18 +6108,6 @@ bool ScrollFrameHelper::IsScrollingActive() const {
   nsIContent* content = mOuter->GetContent();
   return mHasBeenScrolledRecently || IsAlwaysActive() ||
          DisplayPortUtils::HasDisplayPort(content) ||
-         nsContentUtils::HasScrollgrab(content);
-}
-
-bool ScrollFrameHelper::IsScrollingActiveNotMinimalDisplayPort() const {
-  const nsStyleDisplay* disp = mOuter->StyleDisplay();
-  if (disp->mWillChange.bits & StyleWillChangeBits::SCROLL) {
-    return true;
-  }
-
-  nsIContent* content = mOuter->GetContent();
-  return mHasBeenScrolledRecently || IsAlwaysActive() ||
-         DisplayPortUtils::HasNonMinimalDisplayPort(content) ||
          nsContentUtils::HasScrollgrab(content);
 }
 
@@ -6566,7 +6554,7 @@ bool ScrollFrameHelper::ReflowFinished() {
   nsAutoScriptBlocker scriptBlocker;
 
   if (mReclampVVOffsetInReflowFinished) {
-    MOZ_ASSERT(mIsRoot);
+    MOZ_ASSERT(mIsRoot && mOuter->PresShell()->IsVisualViewportOffsetSet());
     mReclampVVOffsetInReflowFinished = false;
     AutoWeakFrame weakFrame(mOuter);
     mOuter->PresShell()->SetVisualViewportOffset(GetVisualViewportOffset(),
@@ -7337,12 +7325,15 @@ bool ScrollFrameHelper::IsScrollAnimating(
 }
 
 void ScrollFrameHelper::ResetScrollInfoIfNeeded(
-    const ScrollGeneration& aGeneration,
+    const MainThreadScrollGeneration& aGeneration,
+    const APZScrollGeneration& aGenerationOnApz,
     APZScrollAnimationType aAPZScrollAnimationType) {
   if (aGeneration == mScrollGeneration) {
     mLastScrollOrigin = ScrollOrigin::None;
     mApzAnimationRequested = false;
   }
+
+  mScrollGenerationOnApz = aGenerationOnApz;
   // We can reset this regardless of scroll generation, as this is only set
   // here, as a response to APZ requesting a repaint.
   mCurrentAPZScrollAnimationType = aAPZScrollAnimationType;

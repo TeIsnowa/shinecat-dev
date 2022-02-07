@@ -245,7 +245,7 @@ var DownloadsPanel = {
    * initialized the first time this method is called, and the panel is shown
    * only when data is ready.
    */
-  showPanel(openedManually = false) {
+  showPanel(openedManually = false, isKeyPress = false) {
     Services.telemetry.scalarAdd("downloads.panel_shown", 1);
     DownloadsCommon.log("Opening the downloads panel.");
 
@@ -263,7 +263,7 @@ var DownloadsPanel = {
     // called while another window is closing (like the window for selecting
     // whether to save or open the file), and that would cause the panel to
     // close immediately.
-    setTimeout(() => this._openPopupIfDataReady(openedManually), 0);
+    setTimeout(() => this._openPopupIfDataReady(openedManually, isKeyPress), 0);
 
     DownloadsCommon.log("Waiting for the downloads panel to appear.");
     this._state = this.kStateWaitingData;
@@ -369,7 +369,8 @@ var DownloadsPanel = {
     this._state = this.kStateShown;
 
     // Since at most one popup is open at any given time, we can set globally.
-    DownloadsCommon.getIndicatorData(window).attentionSuppressed = true;
+    DownloadsCommon.getIndicatorData(window).attentionSuppressed |=
+      DownloadsCommon.SUPPRESS_PANEL_OPEN;
 
     // Ensure that the first item is selected when the panel is focused.
     if (DownloadsView.richListBox.itemCount > 0) {
@@ -399,7 +400,9 @@ var DownloadsPanel = {
     this.keyFocusing = false;
 
     // Since at most one popup is open at any given time, we can set globally.
-    DownloadsCommon.getIndicatorData(window).attentionSuppressed = false;
+    DownloadsCommon.getIndicatorData(
+      window
+    ).attentionSuppressed &= ~DownloadsCommon.SUPPRESS_PANEL_OPEN;
 
     // Allow the anchor to be hidden.
     DownloadsButton.releaseAnchor();
@@ -633,7 +636,7 @@ var DownloadsPanel = {
   /**
    * Opens the downloads panel when data is ready to be displayed.
    */
-  _openPopupIfDataReady(openedManually) {
+  _openPopupIfDataReady(openedManually, isKeyPress) {
     // We don't want to open the popup if we already displayed it, or if we are
     // still loading data.
     if (this._state != this.kStateWaitingData || DownloadsView.loading) {
@@ -655,6 +658,7 @@ var DownloadsPanel = {
 
     if (!anchor) {
       DownloadsCommon.error("Downloads button cannot be found.");
+      this._state = this.kStateHidden;
       return;
     }
 
@@ -671,6 +675,11 @@ var DownloadsPanel = {
 
     DownloadsCommon.log("Opening downloads panel popup.");
 
+    if (isKeyPress) {
+      // If the panel was opened via a keypress, enable focus indicators.
+      this.keyFocusing = true;
+    }
+
     // Delay displaying the panel because this function will sometimes be
     // called while another window is closing (like the window for selecting
     // whether to save or open the file), and that would cause the panel to
@@ -684,7 +693,10 @@ var DownloadsPanel = {
         0,
         false,
         null
-      ).catch(Cu.reportError);
+      ).catch(e => {
+        Cu.reportError(e);
+        this._state = this.kStateHidden;
+      });
 
       if (!openedManually) {
         this._delayPopupItems();
@@ -1067,6 +1079,13 @@ var DownloadsView = {
     DownloadsViewController.updateCommands();
 
     DownloadsViewUI.updateContextMenuForElement(this.contextMenu, element);
+    // Hide the copy location item if there is somehow no URL. We have to do
+    // this here instead of in DownloadsViewUI because DownloadsPlacesView
+    // allows selecting multiple downloads, so in that view the menuitem will be
+    // shown according to whether at least one of the selected items has a URL.
+    this.contextMenu.querySelector(
+      ".downloadCopyLocationMenuItem"
+    ).hidden = !element._shell.download.source?.url;
   },
 
   onDownloadDragStart(aEvent) {
@@ -1166,8 +1185,9 @@ class DownloadsViewItem extends DownloadsViewUI.DownloadElementShell {
         let { target } = this.download;
         return target.exists || target.partFileExists;
       }
-      case "cmd_delete":
       case "downloadsCmd_copyLocation":
+        return !!this.download.source?.url;
+      case "cmd_delete":
       case "downloadsCmd_doDefault":
         return true;
       case "downloadsCmd_showBlockedInfo":

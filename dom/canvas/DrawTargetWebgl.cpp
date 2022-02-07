@@ -1256,11 +1256,9 @@ bool PathCacheEntry::MatchesPath(const SkPath& aPath, const Pattern* aPattern,
                                  const StrokeOptions* aStrokeOptions,
                                  const Matrix& aTransform,
                                  const IntRect& aBounds, HashNumber aHash) {
-  if (aHash != mHash || !HasMatchingScale(aTransform, mTransform) ||
-      aBounds.Size() != mBounds.Size() || aPath == mPath) {
-    return false;
-  }
-  return (!aPattern ? !mPattern : mPattern && *aPattern == *mPattern) &&
+  return aHash == mHash && HasMatchingScale(aTransform, mTransform) &&
+         aBounds.Size() == mBounds.Size() && aPath == mPath &&
+         (!aPattern ? !mPattern : mPattern && *aPattern == *mPattern) &&
          (!aStrokeOptions
               ? !mStrokeOptions
               : mStrokeOptions && *aStrokeOptions == *mStrokeOptions);
@@ -1625,11 +1623,15 @@ void DrawTargetWebgl::Stroke(const Path* aPath, const Pattern& aPattern,
   }
   const auto& skiaPath = static_cast<const PathSkia*>(aPath)->GetPath();
   SkRect rect;
-  if (skiaPath.isRect(&rect)) {
-    StrokeRect(SkRectToRect(rect), aPattern, aStrokeOptions, aOptions);
-  } else if (!mWebglValid) {
+  SkPoint line[2];
+  if (!mWebglValid) {
     MarkSkiaChanged(aOptions);
     mSkia->Stroke(aPath, aPattern, aStrokeOptions, aOptions);
+  } else if (skiaPath.isRect(&rect)) {
+    StrokeRect(SkRectToRect(rect), aPattern, aStrokeOptions, aOptions);
+  } else if (skiaPath.isLine(line)) {
+    StrokeLine(SkPointToPoint(line[0]), SkPointToPoint(line[1]), aPattern,
+               aStrokeOptions, aOptions);
   } else {
     DrawPath(aPath, aPattern, aOptions, &aStrokeOptions);
   }

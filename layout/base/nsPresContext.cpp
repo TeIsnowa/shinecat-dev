@@ -22,7 +22,7 @@
 #include "mozilla/PresShellInlines.h"
 
 #include "base/basictypes.h"
-
+#include "nsCRT.h"
 #include "nsCOMPtr.h"
 #include "nsCSSFrameConstructor.h"
 #include "nsDocShell.h"
@@ -282,7 +282,6 @@ nsPresContext::nsPresContext(dom::Document* aDocument, nsPresContextType aType)
       mHadContentfulPaint(false),
       mHadNonTickContentfulPaint(false),
       mHadContentfulPaintComposite(false),
-      mWantsExtraTick(false),
 #ifdef DEBUG
       mInitialized(false),
 #endif
@@ -409,7 +408,6 @@ NS_IMPL_CYCLE_COLLECTION_UNLINK_BEGIN(nsPresContext)
 
   tmp->Destroy();
 NS_IMPL_CYCLE_COLLECTION_UNLINK_END
-
 
 bool nsPresContext::IsChrome() const {
   return Document()->IsInChromeDocShell();
@@ -2344,7 +2342,7 @@ static void GetInterruptEnv() {
   char* ev = PR_GetEnv("GECKO_REFLOW_INTERRUPT_MODE");
   if (ev) {
 #ifndef XP_WIN
-    if (PL_strcasecmp(ev, "random") == 0) {
+    if (nsCRT::strcasecmp(ev, "random") == 0) {
       ev = PR_GetEnv("GECKO_REFLOW_INTERRUPT_SEED");
       if (ev) {
         sInterruptSeed = atoi(ev);

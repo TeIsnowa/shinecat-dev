@@ -225,7 +225,6 @@ def try_preprocess(compiler, language, source, onerror=None):
 @imports(_from="mozbuild.configure.constants", _import="CPU_preprocessor_checks")
 @imports(_from="mozbuild.configure.constants", _import="kernel_preprocessor_checks")
 @imports(_from="mozbuild.configure.constants", _import="OS_preprocessor_checks")
-@imports(_from="six", _import="iteritems")
 @imports(_from="textwrap", _import="dedent")
 @imports(_from="__builtin__", _import="Exception")
 def get_compiler_info(compiler, language):
@@ -274,7 +273,7 @@ def get_compiler_info(compiler, language):
         ("KERNEL", kernel_preprocessor_checks),
         ("OS", OS_preprocessor_checks),
     ):
-        for n, (value, condition) in enumerate(iteritems(preprocessor_checks)):
+        for n, (value, condition) in enumerate(preprocessor_checks.items()):
             check += dedent(
                 """\
                 #%(if)s %(condition)s
@@ -1272,6 +1271,11 @@ def compiler(
 
         if info.flags:
             raise FatalCheckError("Unknown compiler or compiler not supported.")
+
+        # Recent clang defaults to compiler-rt, but we want libgcc for compat
+        # with the older NDKs we use.
+        if host_or_target.os == "Android":
+            flags.append("--rtlib=libgcc")
 
         return namespace(
             wrapper=wrapper,
@@ -2281,6 +2285,7 @@ def frame_pointer_default(optimize, debug, target, msan, asan, ubsan):
         or asan
         or ubsan
         or (target.os == "WINNT" and target.cpu in ("x86", "aarch64"))
+        or (target.os == "OSX" and target.cpu == "aarch64")
     )
 
 
@@ -2411,9 +2416,7 @@ def as_with_flags(as_info, assembler, provided_assembler, c_compiler):
     return c_compiler.wrapper + [assembler] + c_compiler.flags
 
 
-add_old_configure_assignment("AS", as_with_flags)
-add_old_configure_assignment("ac_cv_prog_AS", as_with_flags)
-add_old_configure_assignment("ac_cv_path_AS", as_with_flags)
+set_config("AS", as_with_flags)
 
 
 @depends(assembler, c_compiler, extra_toolchain_flags)

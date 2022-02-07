@@ -55,11 +55,13 @@
 #include "mozilla/dom/Fetch.h"
 #include "mozilla/dom/FileBinding.h"
 #include "mozilla/dom/HeadersBinding.h"
+#include "mozilla/dom/IOUtilsBinding.h"
 #include "mozilla/dom/InspectorUtilsBinding.h"
 #include "mozilla/dom/MessageChannelBinding.h"
 #include "mozilla/dom/MessagePortBinding.h"
 #include "mozilla/dom/NodeBinding.h"
 #include "mozilla/dom/NodeFilterBinding.h"
+#include "mozilla/dom/PathUtilsBinding.h"
 #include "mozilla/dom/PerformanceBinding.h"
 #include "mozilla/dom/PromiseBinding.h"
 #include "mozilla/dom/PromiseDebuggingBinding.h"
@@ -75,6 +77,7 @@
 #include "mozilla/dom/FileReaderBinding.h"
 #include "mozilla/dom/ScriptSettings.h"
 #include "mozilla/dom/SelectionBinding.h"
+#include "mozilla/dom/StorageManager.h"
 #include "mozilla/dom/TextDecoderBinding.h"
 #include "mozilla/dom/TextEncoderBinding.h"
 #include "mozilla/dom/UnionConversions.h"
@@ -360,6 +363,17 @@ static bool SandboxCreateFetch(JSContext* cx, HandleObject obj) {
          dom::Request_Binding::GetConstructorObject(cx) &&
          dom::Response_Binding::GetConstructorObject(cx) &&
          dom::Headers_Binding::GetConstructorObject(cx);
+}
+
+static bool SandboxCreateStorage(JSContext* cx, JS::HandleObject obj) {
+  MOZ_ASSERT(JS_IsGlobalObject(obj));
+
+  nsIGlobalObject* native = xpc::NativeGlobal(obj);
+  MOZ_ASSERT(native);
+
+  dom::StorageManager* storageManager = new dom::StorageManager(native);
+  JS::RootedObject wrapped(cx, storageManager->WrapObject(cx, nullptr));
+  return JS_DefineProperty(cx, obj, "storage", wrapped, JSPROP_ENUMERATE);
 }
 
 static bool SandboxStructuredClone(JSContext* cx, unsigned argc, Value* vp) {
@@ -920,6 +934,8 @@ bool xpc::GlobalProperties::Parse(JSContext* cx, JS::HandleObject obj) {
       FormData = true;
     } else if (JS_LinearStringEqualsLiteral(nameStr, "Headers")) {
       Headers = true;
+    } else if (JS_LinearStringEqualsLiteral(nameStr, "IOUtils")) {
+      IOUtils = true;
     } else if (JS_LinearStringEqualsLiteral(nameStr, "InspectorUtils")) {
       InspectorUtils = true;
     } else if (JS_LinearStringEqualsLiteral(nameStr, "MessageChannel")) {
@@ -928,6 +944,8 @@ bool xpc::GlobalProperties::Parse(JSContext* cx, JS::HandleObject obj) {
       Node = true;
     } else if (JS_LinearStringEqualsLiteral(nameStr, "NodeFilter")) {
       NodeFilter = true;
+    } else if (JS_LinearStringEqualsLiteral(nameStr, "PathUtils")) {
+      PathUtils = true;
     } else if (JS_LinearStringEqualsLiteral(nameStr, "Performance")) {
       Performance = true;
     } else if (JS_LinearStringEqualsLiteral(nameStr, "PromiseDebugging")) {
@@ -966,6 +984,8 @@ bool xpc::GlobalProperties::Parse(JSContext* cx, JS::HandleObject obj) {
       crypto = true;
     } else if (JS_LinearStringEqualsLiteral(nameStr, "fetch")) {
       fetch = true;
+    } else if (JS_LinearStringEqualsLiteral(nameStr, "storage")) {
+      storage = true;
     } else if (JS_LinearStringEqualsLiteral(nameStr, "structuredClone")) {
       structuredClone = true;
     } else if (JS_LinearStringEqualsLiteral(nameStr, "indexedDB")) {
@@ -1052,6 +1072,10 @@ bool xpc::GlobalProperties::Define(JSContext* cx, JS::HandleObject obj) {
     return false;
   }
 
+  if (IOUtils && !dom::IOUtils_Binding::GetConstructorObject(cx)) {
+    return false;
+  }
+
   if (InspectorUtils && !dom::InspectorUtils_Binding::GetConstructorObject(cx))
     return false;
 
@@ -1065,6 +1089,10 @@ bool xpc::GlobalProperties::Define(JSContext* cx, JS::HandleObject obj) {
   }
 
   if (NodeFilter && !dom::NodeFilter_Binding::GetConstructorObject(cx)) {
+    return false;
+  }
+
+  if (PathUtils && !dom::PathUtils_Binding::GetConstructorObject(cx)) {
     return false;
   }
 
@@ -1126,6 +1154,10 @@ bool xpc::GlobalProperties::Define(JSContext* cx, JS::HandleObject obj) {
   }
 
   if (fetch && !SandboxCreateFetch(cx, obj)) {
+    return false;
+  }
+
+  if (storage && !SandboxCreateStorage(cx, obj)) {
     return false;
   }
 

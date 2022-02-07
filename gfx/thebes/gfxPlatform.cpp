@@ -24,6 +24,7 @@
 #include "mozilla/ClearOnShutdown.h"
 #include "mozilla/StaticPrefs_accessibility.h"
 #include "mozilla/StaticPrefs_apz.h"
+#include "mozilla/StaticPrefs_canvas.h"
 #include "mozilla/StaticPrefs_gfx.h"
 #include "mozilla/StaticPrefs_layout.h"
 #include "mozilla/StaticPrefs_layers.h"
@@ -168,8 +169,6 @@ static bool gEverInitialized = false;
 static int32_t gLastUsedFrameRate = -1;
 
 const ContentDeviceData* gContentDeviceInitData = nullptr;
-
-static Mutex* gGfxPlatformPrefsLock = nullptr;
 
 Atomic<bool, MemoryOrdering::ReleaseAcquire> gfxPlatform::gCMSInitialized;
 CMSMode gfxPlatform::gCMSMode = CMSMode::Off;
@@ -877,8 +876,6 @@ void gfxPlatform::Init() {
 
   InitMoz2DLogging();
 
-  gGfxPlatformPrefsLock = new Mutex("gfxPlatform::gGfxPlatformPrefsLock");
-
   /* Initialize the GfxInfo service.
    * Note: we can't call functions on GfxInfo that depend
    * on gPlatform until after it has been initialized
@@ -935,6 +932,12 @@ void gfxPlatform::Init() {
   if (gfxConfig::IsEnabled(Feature::GPU_PROCESS)) {
     GPUProcessManager* gpu = GPUProcessManager::Get();
     gpu->LaunchGPUProcess();
+  }
+
+  if (XRE_IsParentProcess()) {
+    nsAutoCString allowlist;
+    Preferences::GetCString("gfx.offscreencavas.domain-allowlist", allowlist);
+    gfxVars::SetOffscreenCanvasDomainAllowlist(allowlist);
   }
 
   gLastUsedFrameRate = ForceSoftwareVsync() ? GetSoftwareVsyncRate() : -1;
@@ -1259,9 +1262,6 @@ void gfxPlatform::Shutdown() {
   }
 
   gfx::Factory::ShutDown();
-
-  delete gGfxPlatformPrefsLock;
-
   gfxVars::Shutdown();
   gfxFont::DestroySingletons();
 

@@ -44,7 +44,6 @@
 #include "InternalResponse.h"
 
 #include "mozilla/dom/WorkerCommon.h"
-#include "mozilla/dom/WorkerPrivate.h"
 #include "mozilla/dom/WorkerRef.h"
 #include "mozilla/dom/WorkerRunnable.h"
 #include "mozilla/dom/WorkerScope.h"
@@ -140,47 +139,17 @@ NS_IMPL_CYCLE_COLLECTING_RELEASE(AbortSignalMainThread)
 
 class AbortSignalProxy;
 
-class WorkerSignalFollower final : public AbortFollower {
- public:
-  // This runnable propagates changes from the AbortSignalImpl on workers to the
-  // AbortSignalImpl on main-thread.
-  class AbortSignalProxyRunnable final : public Runnable {
-    RefPtr<AbortSignalProxy> mProxy;
-
-   public:
-    explicit AbortSignalProxyRunnable(AbortSignalProxy* aProxy)
-        : Runnable("dom::WorkerSignalFollower::AbortSignalProxyRunnable"),
-          mProxy(aProxy) {}
-
-    NS_IMETHOD Run() override;
-  };
+// This runnable propagates changes from the AbortSignalImpl on workers to the
+// AbortSignalImpl on main-thread.
+class AbortSignalProxyRunnable final : public Runnable {
+  RefPtr<AbortSignalProxy> mProxy;
 
  public:
-  NS_DECL_CYCLE_COLLECTING_ISUPPORTS
-  NS_DECL_CYCLE_COLLECTION_CLASS(WorkerSignalFollower)
+  explicit AbortSignalProxyRunnable(AbortSignalProxy* aProxy)
+      : Runnable("dom::AbortSignalProxyRunnable"), mProxy(aProxy) {}
 
-  void RunAbortAlgorithm() override {}
-
- private:
-  ~WorkerSignalFollower() = default;
+  NS_IMETHOD Run() override;
 };
-
-NS_IMPL_CYCLE_COLLECTION_CLASS(WorkerSignalFollower)
-
-NS_IMPL_CYCLE_COLLECTING_ADDREF(WorkerSignalFollower)
-NS_IMPL_CYCLE_COLLECTING_RELEASE(WorkerSignalFollower)
-
-NS_IMPL_CYCLE_COLLECTION_UNLINK_BEGIN(WorkerSignalFollower)
-  AbortFollower::Unlink(static_cast<AbortFollower*>(tmp));
-NS_IMPL_CYCLE_COLLECTION_UNLINK_END
-
-NS_IMPL_CYCLE_COLLECTION_TRAVERSE_BEGIN(WorkerSignalFollower)
-  AbortFollower::Traverse(static_cast<AbortFollower*>(tmp), cb);
-NS_IMPL_CYCLE_COLLECTION_TRAVERSE_END
-
-NS_INTERFACE_MAP_BEGIN_CYCLE_COLLECTION(WorkerSignalFollower)
-  NS_INTERFACE_MAP_ENTRY(nsISupports)
-NS_INTERFACE_MAP_END
 
 // This class orchestrates the proxying of AbortSignal operations between the
 // main thread and a worker thread.
@@ -241,7 +210,7 @@ class AbortSignalProxy final : public AbortFollower {
 
 NS_IMPL_ISUPPORTS0(AbortSignalProxy)
 
-NS_IMETHODIMP WorkerSignalFollower::AbortSignalProxyRunnable::Run() {
+NS_IMETHODIMP AbortSignalProxyRunnable::Run() {
   MOZ_ASSERT(NS_IsMainThread());
   AbortSignalImpl* signalImpl = mProxy->GetOrCreateSignalImplForMainThread();
   signalImpl->SignalAbort(JS::UndefinedHandleValue);
@@ -250,8 +219,6 @@ NS_IMETHODIMP WorkerSignalFollower::AbortSignalProxyRunnable::Run() {
 
 void AbortSignalProxy::RunAbortAlgorithm() {
   MOZ_ASSERT(!NS_IsMainThread());
-  using AbortSignalProxyRunnable =
-      WorkerSignalFollower::AbortSignalProxyRunnable;
   RefPtr<AbortSignalProxyRunnable> runnable =
       new AbortSignalProxyRunnable(this);
   MainThreadEventTarget()->Dispatch(runnable.forget(), NS_DISPATCH_NORMAL);
@@ -1124,16 +1091,15 @@ nsresult ExtractByteStreamFromBody(const fetch::ResponseBodyInit& aBodyInit,
 template <class Derived>
 FetchBody<Derived>::FetchBody(nsIGlobalObject* aOwner)
     : mOwner(aOwner),
-      mWorkerPrivate(nullptr),
       mReadableStreamBody(nullptr),
       mReadableStreamReader(nullptr),
       mBodyUsed(false) {
   MOZ_ASSERT(aOwner);
 
   if (!NS_IsMainThread()) {
-    mWorkerPrivate = GetCurrentThreadWorkerPrivate();
-    MOZ_ASSERT(mWorkerPrivate);
-    mMainThreadEventTarget = mWorkerPrivate->MainThreadEventTarget();
+    WorkerPrivate* wp = GetCurrentThreadWorkerPrivate();
+    MOZ_ASSERT(wp);
+    mMainThreadEventTarget = wp->MainThreadEventTarget();
   } else {
     mMainThreadEventTarget = aOwner->EventTargetFor(TaskCategory::Other);
   }
@@ -1286,7 +1252,8 @@ already_AddRefed<Promise> FetchBody<Derived>::ConsumeBody(
     JSContext* aCx, BodyConsumer::ConsumeType aType, ErrorResult& aRv) {
   aRv.MightThrowJSException();
 
-  RefPtr<AbortSignalImpl> signalImpl = DerivedClass()->GetSignalImpl();
+  RefPtr<AbortSignalImpl> signalImpl =
+      DerivedClass()->GetSignalImplToConsumeBody();
   if (signalImpl && signalImpl->Aborted()) {
     aRv.Throw(NS_ERROR_DOM_ABORT_ERR);
     return nullptr;
@@ -1803,7 +1770,6 @@ NS_IMPL_RELEASE_INHERITED(EmptyBody, FetchBody<EmptyBody>)
 NS_IMPL_CYCLE_COLLECTION_CLASS(EmptyBody)
 
 NS_IMPL_CYCLE_COLLECTION_UNLINK_BEGIN_INHERITED(EmptyBody, FetchBody<EmptyBody>)
-  AbortFollower::Unlink(static_cast<AbortFollower*>(tmp));
   NS_IMPL_CYCLE_COLLECTION_UNLINK(mOwner)
   NS_IMPL_CYCLE_COLLECTION_UNLINK(mAbortSignalImpl)
   NS_IMPL_CYCLE_COLLECTION_UNLINK(mFetchStreamReader)
@@ -1815,7 +1781,6 @@ NS_IMPL_CYCLE_COLLECTION_UNLINK_END
 
 NS_IMPL_CYCLE_COLLECTION_TRAVERSE_BEGIN_INHERITED(EmptyBody,
                                                   FetchBody<EmptyBody>)
-  AbortFollower::Traverse(static_cast<AbortFollower*>(tmp), cb);
   NS_IMPL_CYCLE_COLLECTION_TRAVERSE(mOwner)
   NS_IMPL_CYCLE_COLLECTION_TRAVERSE(mAbortSignalImpl)
   NS_IMPL_CYCLE_COLLECTION_TRAVERSE(mFetchStreamReader)

@@ -7,7 +7,6 @@
 %include ../shared/browser.inc.css
 %include ../shared/browser-custom-colors.inc.css
 %filter substitution
-%define glassShadowColor hsla(240,5%,5%,0.3)
 
 :root {
   --toolbar-non-lwt-bgcolor: -moz-dialog;
@@ -448,7 +447,7 @@ toolbarbutton.bookmark-item[dragover="true"][open="true"] {
   }
 }
 
-@media (prefers-color-scheme: dark) {
+@media (-moz-content-prefers-color-scheme: dark) {
   #statuspanel-label {
     background-color: hsl(240, 1%, 20%);
     border-color: hsl(240, 1%, 40%);

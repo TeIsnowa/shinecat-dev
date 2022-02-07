@@ -526,6 +526,32 @@
     value: true
     mirror: always
 
+# Mode to use when receiving kinetic scroll input.
+#
+#  * 0: Auto mode (uses the default behavior, subject to change).
+#  * 1: Page mode: Uses gtk deltas as a percentage of the page size to scroll. This mode matches:
+#
+#    https://gitlab.gnome.org/GNOME/gtk/blob/c734c7e9188b56f56c3a504abee05fa40c5475ac/gtk/gtkrange.c#L3063-3074
+#
+#  * 2: Pixel mode: Uses gtk deltas as a fixed pixel multiplier. This mode matches e.g. GNOME web.
+#
+#    https://webkit-search.igalia.com/webkit/rev/215039ef09d6bfd6e088175bfe30788d95b9705d/Source/WebKit/Shared/gtk/WebEventFactory.cpp#265-296
+#    (multiplied then by pixelsPerLineStep which in GNOME-web is 40).
+-   name: apz.gtk.kinetic_scroll.delta_mode
+    type: uint32_t
+    value: 0
+    mirror: always
+
+-   name: apz.gtk.kinetic_scroll.page_delta_mode_multiplier
+    type: float
+    value: 1.0f
+    mirror: always
+
+-   name: apz.gtk.kinetic_scroll.pixel_delta_mode_multiplier
+    type: float
+    value: 40.0f
+    mirror: always
+
 -   name: apz.gtk.touchpad_pinch.enabled
     type: RelaxedAtomicBool
     value: true
@@ -1185,6 +1211,12 @@
   value: 16777216
   mirror: always
 
+# True to collect wireframes upon navigations / pushState
+- name: browser.history.collectWireframes
+  type: bool
+  value: false
+  mirror: always
+
 #if defined(XP_WIN) || defined(XP_LINUX)
   # Notify TabUnloader or send the memory pressure if the memory resource
   # notification is signaled AND the available commit space is lower than
@@ -1432,14 +1464,6 @@
   value: true
   mirror: always
 
-# Temporary pref which makes certain ServiceWorkers be isolated in special
-# processes instead of within a the normal web/webIsolated process based on
-# the URI.  Entries are separated by commas
-- name: browser.tabs.remote.serviceWorkerIsolationList
-  type: String
-  value: ""
-  mirror: never
-
 # When this pref is enabled, opaque response is only allowed to enter the
 # content process if it's a response for media (audio, image, video), CSS, or
 # JavaScript.
@@ -1482,7 +1506,11 @@
 # be loaded normally as-if users normally navigated to the page.
 - name: browser.soft_reload.only_force_validate_top_level_document
   type: bool
-  value: @IS_NIGHTLY_BUILD@
+#if defined(EARLY_BETA_OR_EARLIER)
+  value: true
+#else
+  value: false
+#endif
   mirror: always
 
 #---------------------------------------------------------------------------
@@ -1497,7 +1525,7 @@
 
 # Add support for canvas path objects
 - name: canvas.path.enabled
-  type: bool
+  type: RelaxedAtomicBool
   value: true
   mirror: always
 
@@ -2152,12 +2180,6 @@
   type: String
   value: ""
   mirror: never
-
-# Whether WheelEvent should expose wheelDelta / wheelDeltaX / wheelDeltaY
-- name: dom.event.wheelDelta.enabled
-  type: bool
-  value: true
-  mirror: always
 
 #if defined(XP_MACOSX)
 # Whether to disable treating ctrl click as right click
@@ -3420,6 +3442,11 @@
   value: false
   mirror: always
 
+- name: dom.workers.requestAnimationFrame
+  type: RelaxedAtomicBool
+  value: false
+  mirror: always
+
 - name: dom.workers.serialized-sab-access
   type: RelaxedAtomicBool
   value: false
@@ -3454,6 +3481,12 @@
 - name: dom.storageManager.enabled
   type: RelaxedAtomicBool
   value: @IS_NOT_ANDROID@
+  mirror: always
+
+# Whether the File System API is enabled
+- name: dom.fs.enabled
+  type: RelaxedAtomicBool
+  value: false
   mirror: always
 
 # Should we abort LocalStorage requests when a sync message from parent is
@@ -3562,33 +3595,23 @@
 ## Exposure Prefs: To ensure the DOM Streams don't expose more
 # than existing JS Streams implementation, we want to hide some
 # interfaces from the global until later.
-- name: dom.streams.expose.ReadableByteStreamController
+- name: dom.streams.readable_stream_default_controller.enabled
   type: RelaxedAtomicBool
   value: false
   mirror: always
 
-- name: dom.streams.expose.ReadableStreamBYOBReader
-  type: RelaxedAtomicBool
-  value: false
-  mirror: always
-
-- name: dom.streams.expose.ReadableStreamBYOBRequest
-  type: RelaxedAtomicBool
-  value: false
-  mirror: always
-
-- name: dom.streams.expose.ReadableStreamDefaultController
-  type: RelaxedAtomicBool
-  value: false
-  mirror: always
-
-- name: dom.streams.expose.ReadableStreamDefaultReader
+- name: dom.streams.readable_stream_default_reader.enabled
   type: RelaxedAtomicBool
   value: false
   mirror: always
 
 # DON'T enable, there are known issues!
-- name: dom.streams.byte_streams
+- name: dom.streams.byte_streams.enabled
+  type: RelaxedAtomicBool
+  value: false
+  mirror: always
+
+- name: dom.streams.writable_streams.enabled
   type: RelaxedAtomicBool
   value: false
   mirror: always
@@ -3746,15 +3769,10 @@
   mirror: always
 
 # Is support for WebVR APIs enabled?
-# Enabled by default in beta and release for Windows and OS X and for all
-# platforms in nightly and aurora.
+# Disabled everywhere, but not removed.
 - name: dom.vr.enabled
   type: RelaxedAtomicBool
-#if defined(XP_WIN) || defined(XP_DARWIN) || !defined(RELEASE_OR_BETA)
-  value: true
-#else
   value: false
-#endif
   mirror: always
 
 # Should VR sessions always be reported as supported, without first
@@ -4974,6 +4992,21 @@
   value: 5000
   mirror: always
 
+# Temporary pref to test website compatibility with Firefox 100 UA string. This
+# pref will be removed in Firefox 100 because it will no longer needed.
+- name: general.useragent.forceVersion100
+  type: bool
+  value: false
+  mirror: always
+
+# Temporary pref to remember whether we have handled the Nimbus enrollment
+# event for the Firefox 100 UA experiment. This pref will be removed in Firefox
+# 100 because the experiment will have ended.
+- name: general.useragent.handledVersionExperimentEnrollment
+  type: bool
+  value: false
+  mirror: always
+
 #---------------------------------------------------------------------------
 # Prefs starting with "geo."
 #---------------------------------------------------------------------------
@@ -5413,10 +5446,23 @@
   mirror: once
   do_not_use_directly: true
 
+# Enable OffscreenCanvas everywhere.
 - name: gfx.offscreencanvas.enabled
   type: RelaxedAtomicBool
   value: false
   mirror: always
+
+# Enable OffscreenCanvas based on the domain allowlist.
+- name: gfx.offscreencanvas.domain-enabled
+  type: RelaxedAtomicBool
+  value: false
+  mirror: always
+
+# Domains included in the allowlist.
+- name: gfx.offscreencanvas.domain-allowlist
+  type: String
+  value: ""
+  mirror: never
 
 - name: gfx.omta.background-color
   type: bool
@@ -5522,6 +5568,11 @@
   mirror: once
 
 - name: gfx.vsync.force-disable-waitforvblank
+  type: RelaxedAtomicBool
+  value: false
+  mirror: always
+
+- name: gfx.will-change.ignore-opacity
   type: RelaxedAtomicBool
   value: false
   mirror: always
@@ -5681,6 +5732,12 @@
   value: true
   mirror: once
 
+# Whether or not we should force partial present on.
+- name: gfx.webrender.force-partial-present
+  type: bool
+  value: false
+  mirror: once
+
 - name: gfx.webrender.enable-gpu-markers
   type: bool
 #ifdef DEBUG
@@ -5709,6 +5766,11 @@
     mirror: once
   # Whether to use a video overlay layers with DirectComposition
 -   name: gfx.webrender.dcomp-video-overlay-win
+    type: bool
+    value: false
+    mirror: once
+  # Whether to use a yuv video overlay layers with DirectComposition
+-   name: gfx.webrender.dcomp-video-yuv-overlay-win
     type: bool
     value: false
     mirror: once
@@ -6431,6 +6493,12 @@
     type: bool
     value: false
     mirror: always
+
+  # Experimental support for Array Grouping in JavaScript.
+-   name: javascript.options.experimental.array_grouping
+    type: bool
+    value: true
+    mirror: always
 #endif  // NIGHTLY_BUILD
 
 # Experimental support for class static blocks in JavaScript.
@@ -6487,7 +6555,7 @@
 
 - name: javascript.options.wasm_caching
   type: bool
-  value: @IS_EARLY_BETA_OR_EARLIER@
+  value: true
   mirror: always
 
 # The amount of time we wait between a request to GC (due to leaving a page) and doing the actual GC, in ms.
@@ -6559,7 +6627,7 @@
   mirror: always  # LoadStartupJSPrefs
   do_not_use_directly: true
 
-# Streams API.
+# Streams API. This only applies to JS Streams
 - name: javascript.options.streams
   type: RelaxedAtomicBool
   value: true
@@ -6599,7 +6667,7 @@
 #if defined(ENABLE_WASM_RELAXED_SIMD)
 -   name: javascript.options.wasm_relaxed_simd
     type: bool
-    value: false
+    value: @IS_NIGHTLY_BUILD@
     mirror: always
 #endif  // defined(ENABLE_WASM_RELAXED_SIMD)
 
@@ -6620,7 +6688,7 @@
 #if defined(ENABLE_WASM_EXCEPTIONS)
 -   name: javascript.options.wasm_exceptions
     type: bool
-    value: false
+    value: @IS_NIGHTLY_BUILD@
     mirror: always
 #endif // defined(ENABLE_WASM_EXCEPTIONS)
 
@@ -7447,7 +7515,7 @@
 # Is support for CSS hyphenate-character enabled?
 - name: layout.css.hyphenate-character.enabled
   type: RelaxedAtomicBool
-  value: @IS_NIGHTLY_BUILD@
+  value: true
   mirror: always
 
 # Is support for CSS individual transform enabled?
@@ -7623,11 +7691,6 @@
   value: true
   mirror: always
 
-- name: layout.css.resizeobserver.enabled
-  type: bool
-  value: true
-  mirror: always
-
 # Are inter-character ruby annotations enabled?
 - name: layout.css.ruby.intercharacter.enabled
   type: bool
@@ -7754,6 +7817,11 @@
   value: true
   mirror: always
 
+- name: layout.display-list.retain.sc
+  type: RelaxedAtomicBool
+  value: @IS_NIGHTLY_BUILD@
+  mirror: always
+
 # Set the maximum number of modified frames allowed before doing a full
 # display list rebuild.
 - name: layout.display-list.rebuild-frame-limit
@@ -7798,6 +7866,14 @@
 - name: layout.dynamic-reflow-roots.enabled
   type: bool
   value: @IS_EARLY_BETA_OR_EARLIER@
+  mirror: always
+
+# Enables the mechanism to optimize away flex item's final reflow.
+# Warning: Disabling the pref will impact the performance. This is useful only for
+# debugging flexbox issues.
+- name: layout.flexbox.item-final-reflow-optimization.enabled
+  type: bool
+  value: true
   mirror: always
 
 # Enables the <input type=search> custom layout frame with a clear icon.
@@ -8247,7 +8323,7 @@
 #elif defined(XP_WIN) && !defined(_ARM64_)
   value: true
 #elif defined(XP_MACOSX)
-  value: true
+  value: false
 #else
   value: false
 #endif
@@ -8261,7 +8337,7 @@
 #elif defined(XP_WIN) && !defined(_ARM64_)
   value: true
 #elif defined(XP_MACOSX)
-  value: true
+  value: false
 #else
   value: false
 #endif
@@ -8462,7 +8538,7 @@
 
 - name: media.eme.max-throughput-ms
   type: RelaxedAtomicUint32
-  value: 200
+  value: 500
   mirror: always
 
 - name: media.clearkey.persistent-license.enabled
@@ -8692,6 +8768,12 @@
     mirror: always
 #endif
 
+# Allow ffmpeg decoder to decode directly onto shmem buffer
+- name: media.ffmpeg.customized-buffer-allocation
+  type: RelaxedAtomicBool
+  value: @IS_NIGHTLY_BUILD@
+  mirror: always
+
 #ifdef MOZ_FFMPEG
 -   name: media.ffmpeg.enabled
     type: RelaxedAtomicBool
@@ -8708,22 +8790,10 @@
     mirror: always
 
 #ifdef MOZ_WAYLAND
-# Disable DMABuf for ffmpeg video textures on Linux
-- name: media.ffmpeg.dmabuf-textures.disabled
-  type: RelaxedAtomicBool
-  value: false
-  mirror: always
-
 # Use VA-API for ffmpeg video playback on Linux
 - name: media.ffmpeg.vaapi.enabled
   type: RelaxedAtomicBool
   value: false
-  mirror: always
-
-# Use DRM display for VA-API ffmpeg video decoding on Linux
-- name: media.ffmpeg.vaapi-drm-display.enabled
-  type: RelaxedAtomicBool
-  value: true
   mirror: always
 #endif # MOZ_WAYLAND
 #endif  # MOZ_FFMPEG
@@ -9141,6 +9211,15 @@
 - name: media.navigator.enabled
   type: bool
   value: true
+  mirror: always
+
+# This pref turns off window-focus checks on the navigator.mediaDevices methods,
+# for partner testing frameworks.
+# Prefer "focusmanager.testmode", which is already set by default for
+# web-platform tests.
+- name: media.devices.unfocused.enabled
+  type: bool
+  value: false
   mirror: always
 
 # This pref turns off [SecureContext] on the navigator.mediaDevices object, for
@@ -9621,7 +9700,7 @@
 
 - name: network.cookie.sameSite.laxByDefault
   type: bool
-  value: true
+  value: @IS_EARLY_BETA_OR_EARLIER@
   mirror: always
 
 # lax-by-default 2 minutes tollerance for unsafe methods. The value is in seconds.
@@ -9632,12 +9711,12 @@
 
 - name: network.cookie.sameSite.noneRequiresSecure
   type: bool
-  value: true
+  value: @IS_EARLY_BETA_OR_EARLIER@
   mirror: always
 
 - name: network.cookie.sameSite.schemeful
   type: bool
-  value: true
+  value: @IS_EARLY_BETA_OR_EARLIER@
   mirror: always
 
 - name: network.cookie.thirdparty.sessionOnly
@@ -10136,7 +10215,7 @@
 # If true, don't fallback to native DNS upon network errors.
 - name: network.trr.strict_native_fallback
   type: RelaxedAtomicBool
-  value: @IS_NIGHTLY_BUILD@
+  value: false
   mirror: always
 
 # If false, the temporary blocklisting feature is disabled.
@@ -10146,6 +10225,13 @@
 - name: network.trr.temp_blocklist
   type: RelaxedAtomicBool
   value: true
+  mirror: always
+
+# TRR blocklist entry expire time (in seconds). Default is one minute.
+# Meant to survive basically a page load.
+- name: network.trr.temp_blocklist_duration_sec
+  type: RelaxedAtomicUint32
+  value: 60
   mirror: always
 
 # Single TRR request timeout, in milliseconds
@@ -10426,6 +10512,12 @@
   value: ""
   mirror: never
 
+# Enable HTTP/3
+- name: network.http.http3.enable
+  type: RelaxedAtomicBool
+  value: true
+  mirror: always
+
 # Receive buffer size of QUIC socket
 - name: network.http.http3.recvBufferSize
   type: RelaxedAtomicInt32
@@ -10545,12 +10637,6 @@
 - name: network.dns.httpssvc.http3_fast_fallback_timeout
   type: RelaxedAtomicUint32
   value: 50
-  mirror: always
-
-# Whether to use https rr for speculative connections.
-- name: network.dns.use_https_rr_for_speculative_connection
-  type: RelaxedAtomicBool
-  value: false
   mirror: always
 
 # Whether to force a transaction to wait https rr.
@@ -11415,6 +11501,17 @@
   type: RelaxedAtomicBool
   value: false
   mirror: always
+
+# Enrollment preferences for the win32k experiment, set and managed by Normandy
+- name: security.sandbox.content.win32k-experiment.enrollmentStatus
+  type: uint32_t
+  value: 0
+  mirror: never
+
+- name: security.sandbox.content.win32k-experiment.startupEnrollmentStatus
+  type: uint32_t
+  value: 0
+  mirror: never
 
 #if defined(XP_WIN) && defined(MOZ_SANDBOX)
   # Note: win32k is currently _not_ disabled for GMP due to intermittent test
@@ -12516,15 +12613,6 @@
   value: false
   mirror: always
 
-# Whether we try to extract dark theme GTK colors.
-#
-# For now, needed for follow-firefox-theme. In the future will also be needed
-# for the color-scheme CSS property / meta tag / etc.
-- name: widget.gtk.alt-theme.dark
-  type: bool
-  value: true
-  mirror: always
-
 # Whether selection colors for the non-system theme get passed from the system
 # GTK theme.
 - name: widget.gtk.alt-theme.selection
@@ -12593,18 +12681,6 @@
   value: true
   mirror: always
 
-# Use async clipboard on Wayland
-- name: widget.wayland.async-clipboard.enabled
-  type: bool
-  value: true
-  mirror: once
-
-# Use async data getter on Wayland Clipboard
-- name: widget.wayland.async-data-transfer.enabled
-  type: bool
-  value: false
-  mirror: once
-
 # Force fractional scaling using wp_viewporter. Valid values: 0.5 - 8
 - name: widget.wayland.fractional_buffer_scale
   type: float
@@ -12638,7 +12714,7 @@
 # Whether to use gtk portal for the mime handler.
 #  - 0: never
 #  - 1: always
-#  - 2: auto (true for flatpak or GTK_USE_PORTAL=1, false otherwise)
+#  - 2: auto (for now only true for flatpak, see bug 1516290)
 - name: widget.use-xdg-desktop-portal.mime-handler
   type: int32_t
   value: 2
@@ -12693,6 +12769,15 @@
   mirror: always
 #endif
 
+# Whether to disable SwipeTracker (e.g. swipe-to-nav).
+- name: widget.disable-swipe-tracker
+  type: bool
+#ifdef XP_WIN
+  value: true
+#else
+  value: false
+#endif
+  mirror: always
 
 #---------------------------------------------------------------------------
 # Prefs starting with "xul."

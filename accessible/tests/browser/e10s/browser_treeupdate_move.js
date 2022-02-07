@@ -25,12 +25,16 @@ addAccessibleTask(
     <h1 id="heading">Heading</h1>
     <p id="para">Para</p>
   </div>
+  <iframe id="iframe" src="https://example.com/"></iframe>
 </div>
   `,
   async function(browser, docAcc) {
     const textbox = findAccessibleChildByID(docAcc, "textbox");
     const heading = findAccessibleChildByID(docAcc, "heading");
     const para = findAccessibleChildByID(docAcc, "para");
+    const iframe = findAccessibleChildByID(docAcc, "iframe");
+    const iframeDoc = iframe.firstChild;
+    ok(iframeDoc, "iframe contains a document");
 
     let focused = waitForEvent(EVENT_FOCUS, textbox);
     textbox.takeFocus();
@@ -52,6 +56,9 @@ addAccessibleTask(
     // heading was a child of textbox, but was removed when textbox
     // was moved. Ensure it is dead.
     ok(isDefunct(heading), "heading is dead");
+    // Ensure the iframe and its embedded document are alive.
+    ok(!isDefunct(iframe), "iframe is alive");
+    ok(!isDefunct(iframeDoc), "iframeDoc is alive");
   },
   { chrome: true, topLevel: true, iframe: true, remoteIframe: true }
 );

@@ -24,6 +24,7 @@
 #include "jit/AtomicOperations.h"
 #include "jit/Ion.h"
 #include "jit/JitCommon.h"
+#include "jit/JitOptions.h"
 #include "jit/ProcessExecutableMemory.h"
 #include "js/Utility.h"
 #include "threading/ProtectedData.h"  // js::AutoNoteSingleThreadedRegion
@@ -175,8 +176,6 @@ JS_PUBLIC_API const char* JS::detail::InitWithFailureDiagnostic(
 
   js::coverage::InitLCov();
 
-  RETURN_IF_FAIL(js::jit::InitProcessExecutableMemory());
-
   RETURN_IF_FAIL(js::MemoryProtectionExceptionHandler::install());
 
   RETURN_IF_FAIL(js::jit::InitializeJit());
@@ -186,8 +185,6 @@ JS_PUBLIC_API const char* JS::detail::InitWithFailureDiagnostic(
 #ifdef MOZ_VTUNE
   RETURN_IF_FAIL(js::vtune::Initialize());
 #endif
-
-  RETURN_IF_FAIL(js::jit::AtomicOperations::Initialize());
 
 #if JS_HAS_INTL_API
   if (mozilla::intl::ICU4CLibrary::Initialize().isErr()) {
@@ -209,7 +206,7 @@ JS_PUBLIC_API const char* JS::detail::InitWithFailureDiagnostic(
 #endif
 
 #ifndef JS_CODEGEN_NONE
-  // Normally this is forced by the compilation of atomic operations.
+  // This is forced by InitializeJit.
   MOZ_ASSERT(js::jit::CPUFlagsHaveBeenComputed());
 #endif
 
@@ -244,11 +241,11 @@ JS_PUBLIC_API bool JS::InitSelfHostedCode(JSContext* cx, SelfHostedCache cache,
     return false;
   }
 
-#ifndef JS_CODEGEN_NONE
-  if (!rt->createJitRuntime(cx)) {
-    return false;
+  if (js::jit::HasJitBackend()) {
+    if (!rt->createJitRuntime(cx)) {
+      return false;
+    }
   }
-#endif
 
   return true;
 }
@@ -274,8 +271,6 @@ JS_PUBLIC_API void JS_ShutDown(void) {
 #ifdef JS_SIMULATOR
   js::jit::SimulatorProcess::destroy();
 #endif
-
-  js::jit::AtomicOperations::ShutDown();
 
 #ifdef JS_TRACE_LOGGING
   js::DestroyTraceLoggerThreadState();
@@ -307,10 +302,9 @@ JS_PUBLIC_API void JS_ShutDown(void) {
 
   js::FinishDateTimeState();
 
-  if (!JSRuntime::hasLiveRuntimes()) {
-    js::jit::ReleaseProcessExecutableMemory();
-    MOZ_ASSERT(!js::LiveMappedBufferCount());
-  }
+  js::jit::ShutdownJit();
+
+  MOZ_ASSERT_IF(!JSRuntime::hasLiveRuntimes(), !js::LiveMappedBufferCount());
 
   js::ShutDownMallocAllocator();
 
@@ -337,3 +331,11 @@ JS_PUBLIC_API bool JS_SetICUMemoryFunctions(JS_ICUAllocFn allocFn,
     (defined(JS_CODEGEN_X64) || defined(JS_CODEGEN_X86))
 void JS::SetAVXEnabled() { js::jit::CPUInfo::SetAVXEnabled(); }
 #endif
+
+JS_PUBLIC_API void JS::DisableJitBackend() {
+  MOZ_ASSERT(libraryInitState == InitState::Uninitialized,
+             "DisableJitBackend must be called before JS_Init");
+  MOZ_ASSERT(!JSRuntime::hasLiveRuntimes(),
+             "DisableJitBackend must be called before creating a JSContext");
+  js::jit::JitOptions.disableJitBackend = true;
+}

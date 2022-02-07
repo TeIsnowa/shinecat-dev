@@ -84,6 +84,7 @@ XPCOMUtils.defineLazyModuleGetters(this, {
   SessionStore: "resource:///modules/sessionstore/SessionStore.jsm",
   ShellService: "resource:///modules/ShellService.jsm",
   ShortcutUtils: "resource://gre/modules/ShortcutUtils.jsm",
+  SnapshotMonitor: "resource:///modules/SnapshotMonitor.jsm",
   TabCrashHandler: "resource:///modules/ContentCrashHandlers.jsm",
   TabUnloader: "resource:///modules/TabUnloader.jsm",
   TelemetryUtils: "resource://gre/modules/TelemetryUtils.jsm",
@@ -718,7 +719,12 @@ let JSWINDOWACTORS = {
         DOMDocElementInserted: {},
       },
     },
-    matches: ["about:home*", "about:newtab*", "about:welcome*"],
+    matches: [
+      "about:home*",
+      "about:newtab*",
+      "about:welcome*",
+      "about:privatebrowsing",
+    ],
     remoteTypes: ["privilegedabout"],
   },
 
@@ -1676,6 +1682,8 @@ BrowserGlue.prototype = {
     PageActions.init();
 
     DoHController.init();
+
+    SnapshotMonitor.init();
 
     this._firstWindowTelemetry(aWindow);
     this._firstWindowLoaded();
@@ -4114,6 +4122,9 @@ BrowserGlue.prototype = {
         Services.prefs.clearUserPref(oldPref);
       } catch (ex) {}
     }
+
+    // Bug 1745248: Due to multiple backouts, do not use UI Version 123
+    // as this version is most likely set for the Nightly channel
 
     // Update the migration version.
     Services.prefs.setIntPref("browser.migration.version", UI_VERSION);

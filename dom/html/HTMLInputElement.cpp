@@ -1130,6 +1130,8 @@ nsresult HTMLInputElement::Clone(dom::NodeInfo* aNodeInfo,
     it->mShouldInitChecked = false;
   }
 
+  it->mIndeterminate = mIndeterminate;
+
   it->DoneCreatingElement();
 
   it->SetLastValueChangeWasInteractive(mLastValueChangeWasInteractive);
@@ -1374,8 +1376,8 @@ void HTMLInputElement::AfterClearForm(bool aUnbindOrDelete) {
 void HTMLInputElement::ResultForDialogSubmit(nsAString& aResult) {
   if (mType == FormControlType::InputImage) {
     // Get a property set by the frame to find out where it was clicked.
-    nsIntPoint* lastClickedPoint =
-        static_cast<nsIntPoint*>(GetProperty(nsGkAtoms::imageClickedPoint));
+    const auto* lastClickedPoint =
+        static_cast<CSSIntPoint*>(GetProperty(nsGkAtoms::imageClickedPoint));
     int32_t x, y;
     if (lastClickedPoint) {
       x = lastClickedPoint->x;
@@ -1445,8 +1447,9 @@ void HTMLInputElement::SetIndeterminateInternal(bool aValue,
 
   if (aShouldInvalidate) {
     // Repaint the frame
-    nsIFrame* frame = GetPrimaryFrame();
-    if (frame) frame->InvalidateFrameSubtree();
+    if (nsIFrame* frame = GetPrimaryFrame()) {
+      frame->InvalidateFrameSubtree();
+    }
   }
 
   UpdateState(true);
@@ -5669,8 +5672,8 @@ HTMLInputElement::SubmitNamesValues(FormData* aFormData) {
   // Submit .x, .y for input type=image
   if (mType == FormControlType::InputImage) {
     // Get a property set by the frame to find out where it was clicked.
-    nsIntPoint* lastClickedPoint =
-        static_cast<nsIntPoint*>(GetProperty(nsGkAtoms::imageClickedPoint));
+    const auto* lastClickedPoint =
+        static_cast<CSSIntPoint*>(GetProperty(nsGkAtoms::imageClickedPoint));
     int32_t x, y;
     if (lastClickedPoint) {
       // Convert the values to strings for submission

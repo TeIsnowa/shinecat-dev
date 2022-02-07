@@ -293,6 +293,7 @@ struct ParamTraits<mozilla::layers::RepaintRequest>
     WriteParam(aMsg, aParam.mScrollOffset);
     WriteParam(aMsg, aParam.mZoom);
     WriteParam(aMsg, aParam.mScrollGeneration);
+    WriteParam(aMsg, aParam.mScrollGenerationOnApz);
     WriteParam(aMsg, aParam.mDisplayPortMargins);
     WriteParam(aMsg, aParam.mPresShellId);
     WriteParam(aMsg, aParam.mLayoutViewport);
@@ -314,6 +315,7 @@ struct ParamTraits<mozilla::layers::RepaintRequest>
             ReadParam(aMsg, aIter, &aResult->mScrollOffset) &&
             ReadParam(aMsg, aIter, &aResult->mZoom) &&
             ReadParam(aMsg, aIter, &aResult->mScrollGeneration) &&
+            ReadParam(aMsg, aIter, &aResult->mScrollGenerationOnApz) &&
             ReadParam(aMsg, aIter, &aResult->mDisplayPortMargins) &&
             ReadParam(aMsg, aIter, &aResult->mPresShellId) &&
             ReadParam(aMsg, aIter, &aResult->mLayoutViewport) &&
@@ -405,9 +407,9 @@ struct ParamTraits<mozilla::layers::OverscrollBehaviorInfo> {
   }
 };
 
-template <>
-struct ParamTraits<mozilla::ScrollGeneration>
-    : PlainOldDataSerializer<mozilla::ScrollGeneration> {};
+template <typename T>
+struct ParamTraits<mozilla::ScrollGeneration<T>>
+    : PlainOldDataSerializer<mozilla::ScrollGeneration<T>> {};
 
 template <>
 struct ParamTraits<mozilla::ScrollPositionUpdate>
@@ -434,6 +436,8 @@ struct ParamTraits<mozilla::layers::ScrollMetadata>
     WriteParam(aMsg, aParam.mIsRDMTouchSimulationActive);
     WriteParam(aMsg, aParam.mDidContentGetPainted);
     WriteParam(aMsg, aParam.mPrefersReducedMotion);
+    WriteParam(aMsg, aParam.mForceMousewheelAutodir);
+    WriteParam(aMsg, aParam.mForceMousewheelAutodirHonourRoot);
     WriteParam(aMsg, aParam.mDisregardedDirection);
     WriteParam(aMsg, aParam.mOverscrollBehavior);
     WriteParam(aMsg, aParam.mScrollUpdates);
@@ -474,6 +478,11 @@ struct ParamTraits<mozilla::layers::ScrollMetadata>
                                &paramType::SetDidContentGetPainted) &&
            ReadBoolForBitfield(aMsg, aIter, aResult,
                                &paramType::SetPrefersReducedMotion) &&
+           ReadBoolForBitfield(aMsg, aIter, aResult,
+                               &paramType::SetForceMousewheelAutodir) &&
+           ReadBoolForBitfield(
+               aMsg, aIter, aResult,
+               &paramType::SetForceMousewheelAutodirHonourRoot) &&
            ReadParam(aMsg, aIter, &aResult->mDisregardedDirection) &&
            ReadParam(aMsg, aIter, &aResult->mOverscrollBehavior) &&
            ReadParam(aMsg, aIter, &aResult->mScrollUpdates);

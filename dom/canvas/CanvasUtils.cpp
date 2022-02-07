@@ -12,8 +12,12 @@
 #include "mozilla/dom/Document.h"
 #include "mozilla/dom/HTMLCanvasElement.h"
 #include "mozilla/dom/UserActivation.h"
+#include "mozilla/dom/WorkerCommon.h"
+#include "mozilla/dom/WorkerPrivate.h"
+#include "mozilla/gfx/gfxVars.h"
 #include "mozilla/BasePrincipal.h"
 #include "mozilla/StaticPrefs_dom.h"
+#include "mozilla/StaticPrefs_gfx.h"
 #include "mozilla/StaticPrefs_privacy.h"
 #include "mozilla/StaticPrefs_webgl.h"
 #include "nsIPrincipal.h"
@@ -47,24 +51,26 @@ using namespace mozilla::gfx;
 namespace mozilla::CanvasUtils {
 
 bool IsImageExtractionAllowed(dom::Document* aDocument, JSContext* aCx,
-                              nsIPrincipal& aPrincipal) {
+                              Maybe<nsIPrincipal*> aPrincipal) {
   // Do the rest of the checks only if privacy.resistFingerprinting is on.
   if (!nsContentUtils::ShouldResistFingerprinting(aDocument)) {
     return true;
   }
 
   // Don't proceed if we don't have a document or JavaScript context.
-  if (!aDocument || !aCx) {
+  if (!aDocument || !aCx || !aPrincipal) {
     return false;
   }
 
+  nsIPrincipal& subjectPrincipal = *aPrincipal.ref();
+
   // The system principal can always extract canvas data.
-  if (aPrincipal.IsSystemPrincipal()) {
+  if (subjectPrincipal.IsSystemPrincipal()) {
     return true;
   }
 
   // Allow extension principals.
-  auto principal = BasePrincipal::Cast(&aPrincipal);
+  auto* principal = BasePrincipal::Cast(&subjectPrincipal);
   if (principal->AddonPolicy() || principal->ContentScriptAddonPolicy()) {
     return true;
   }
@@ -283,6 +289,35 @@ bool CoerceDouble(const JS::Value& v, double* d) {
 bool HasDrawWindowPrivilege(JSContext* aCx, JSObject* /* unused */) {
   return nsContentUtils::CallerHasPermission(aCx,
                                              nsGkAtoms::all_urlsPermission);
+}
+
+bool IsOffscreenCanvasEnabled(JSContext* aCx, JSObject* /* unused */) {
+  if (StaticPrefs::gfx_offscreencanvas_enabled()) {
+    return true;
+  }
+
+  if (!StaticPrefs::gfx_offscreencanvas_domain_enabled()) {
+    return false;
+  }
+
+  const auto& allowlist = gfxVars::GetOffscreenCanvasDomainAllowlistOrDefault();
+
+  if (!NS_IsMainThread()) {
+    dom::WorkerPrivate* workerPrivate = dom::GetWorkerPrivateFromContext(aCx);
+    if (workerPrivate->UsesSystemPrincipal()) {
+      return true;
+    }
+
+    return nsContentUtils::IsURIInList(workerPrivate->GetBaseURI(), allowlist);
+  }
+
+  nsIPrincipal* principal = nsContentUtils::SubjectPrincipal(aCx);
+  if (principal->IsSystemPrincipal()) {
+    return true;
+  }
+
+  nsCOMPtr<nsIURI> uri = principal->GetURI();
+  return nsContentUtils::IsURIInList(uri, allowlist);
 }
 
 bool CheckWriteOnlySecurity(bool aCORSUsed, nsIPrincipal* aPrincipal,

@@ -444,7 +444,7 @@ function output(statuses) {
     );
 
     let file = new FileUtils.File(
-      PathUtils.join(Services.dirsvc.get("CurWorkD", Ci.nsIfile).path, OUTPUT)
+      PathUtils.join(Services.dirsvc.get("CurWorkD", Ci.nsIFile).path, OUTPUT)
     );
     let fos = FileUtils.openSafeFileOutputStream(file);
     writeTo(HEADER, fos);
@@ -462,6 +462,7 @@ function output(statuses) {
     dump("finished writing output file\n");
   } catch (e) {
     dump("ERROR: problem writing output to '" + OUTPUT + "': " + e + "\n");
+    throw e;
   }
 }
 

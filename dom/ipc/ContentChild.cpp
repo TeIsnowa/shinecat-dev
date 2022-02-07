@@ -2364,8 +2364,6 @@ mozilla::ipc::IPCResult ContentChild::RecvNotifyAlertsObserver(
   return IPC_OK();
 }
 
-// NOTE: This method is being run in the SystemGroup, and thus cannot directly
-// touch pages. See GetSpecificMessageEventTarget.
 mozilla::ipc::IPCResult ContentChild::RecvNotifyVisited(
     nsTArray<VisitedQueryResult>&& aURIs) {
   nsCOMPtr<IHistory> history = components::History::Service();
@@ -2841,6 +2839,12 @@ mozilla::ipc::IPCResult ContentChild::RecvNotifyProcessPriorityChanged(
                       ProcessPriorityToString(mProcessPriority)),
                   ProfilerString8View::WrapNullTerminatedString(
                       ProcessPriorityToString(aPriority)));
+
+  // Record FOG data before the priority change.
+  // Ignore the change if it's the first time we set the process priority.
+  if (mProcessPriority != hal::PROCESS_PRIORITY_UNKNOWN) {
+    glean::RecordPowerMetrics();
+  }
   mProcessPriority = aPriority;
 
   os->NotifyObservers(static_cast<nsIPropertyBag2*>(props),

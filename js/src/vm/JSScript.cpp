@@ -1083,28 +1083,31 @@ void ScriptSource::convertToCompressedSource(SharedImmutableString compressed,
 }
 
 template <typename Unit>
-void ScriptSource::performDelayedConvertToCompressedSource() {
+void ScriptSource::performDelayedConvertToCompressedSource(
+    ExclusiveData<ReaderInstances>::Guard& g) {
   // There might not be a conversion to compressed source happening at all.
-  if (pendingCompressed_.empty()) {
+  if (g->pendingCompressed.empty()) {
     return;
   }
 
   CompressedData<Unit>& pending =
-      pendingCompressed_.ref<CompressedData<Unit>>();
+      g->pendingCompressed.ref<CompressedData<Unit>>();
 
   convertToCompressedSource<Unit>(std::move(pending.raw),
                                   pending.uncompressedLength);
 
-  pendingCompressed_.destroy();
+  g->pendingCompressed.destroy();
 }
 
 template <typename Unit>
 ScriptSource::PinnedUnits<Unit>::~PinnedUnits() {
   if (units_) {
-    MOZ_ASSERT(*stack_ == this);
-    *stack_ = prev_;
-    if (!prev_) {
-      source_->performDelayedConvertToCompressedSource<Unit>();
+    // Note: We use a Mutex with Exclusive access, such that no PinnedUnits
+    // instance is live while we are compressing the source.
+    auto guard = source_->readers_.lock();
+    MOZ_ASSERT(guard->count > 0);
+    if (--guard->count) {
+      source_->performDelayedConvertToCompressedSource<Unit>(guard);
     }
   }
 }
@@ -1224,9 +1227,8 @@ ScriptSource::PinnedUnits<Unit>::PinnedUnits(
 
   units_ = source->units<Unit>(cx, holder, begin, len);
   if (units_) {
-    stack_ = &source->pinnedUnitsStack_;
-    prev_ = *stack_;
-    *stack_ = this;
+    auto guard = source->readers_.lock();
+    guard->count++;
   }
 }
 
@@ -1436,17 +1438,21 @@ void ScriptSource::triggerConvertToCompressedSource(
   // If units aren't pinned -- and they probably won't be, we'd have to have a
   // GC in the small window of time where a |PinnedUnits| was live -- then we
   // can immediately convert.
-  if (MOZ_LIKELY(!pinnedUnitsStack_)) {
-    convertToCompressedSource<Unit>(std::move(compressed), uncompressedLength);
-    return;
-  }
+  {
+    auto guard = readers_.lock();
+    if (MOZ_LIKELY(!guard->count)) {
+      convertToCompressedSource<Unit>(std::move(compressed),
+                                      uncompressedLength);
+      return;
+    }
 
-  // Otherwise, set aside the compressed-data info.  The conversion is performed
-  // when the last |PinnedUnits| dies.
-  MOZ_ASSERT(pendingCompressed_.empty(),
-             "shouldn't be multiple conversions happening");
-  pendingCompressed_.construct<CompressedData<Unit>>(std::move(compressed),
-                                                     uncompressedLength);
+    // Otherwise, set aside the compressed-data info.  The conversion is
+    // performed when the last |PinnedUnits| dies.
+    MOZ_ASSERT(guard->pendingCompressed.empty(),
+               "shouldn't be multiple conversions happening");
+    guard->pendingCompressed.construct<CompressedData<Unit>>(
+        std::move(compressed), uncompressedLength);
+  }
 }
 
 template <typename Unit>
@@ -1463,10 +1469,16 @@ template <typename Unit>
     return false;
   }
 
-  MOZ_ASSERT(pinnedUnitsStack_ == nullptr,
-             "shouldn't be initializing a ScriptSource while its characters "
-             "are pinned -- that only makes sense with a ScriptSource actively "
-             "being inspected");
+#ifdef DEBUG
+  {
+    auto guard = readers_.lock();
+    MOZ_ASSERT(
+        guard->count == 0,
+        "shouldn't be initializing a ScriptSource while its characters "
+        "are pinned -- that only makes sense with a ScriptSource actively "
+        "being inspected");
+  }
+#endif
 
   data = SourceType(Compressed<Unit, SourceRetrievable::No>(std::move(deduped),
                                                             sourceLength));
@@ -1686,8 +1698,13 @@ bool js::SynchronouslyCompressSource(JSContext* cx,
   RunPendingSourceCompressions(cx->runtime());
 
   ScriptSource* ss = script->scriptSource();
-  MOZ_ASSERT(!ss->pinnedUnitsStack_,
-             "can't synchronously compress while source units are in use");
+#ifdef DEBUG
+  {
+    auto guard = ss->readers_.lock();
+    MOZ_ASSERT(guard->count == 0,
+               "can't synchronously compress while source units are in use");
+  }
+#endif
 
   // In principle a previously-triggered compression on a helper thread could
   // have already completed.  If that happens, there's nothing more to do.
@@ -2112,11 +2129,9 @@ void JSScript::relazify(JSRuntime* rt) {
   js::Scope* scope = enclosingScope();
   UniquePtr<PrivateScriptData> scriptData;
 
-#ifndef JS_CODEGEN_NONE
   // Any JIT compiles should have been released, so we already point to the
   // interpreter trampoline which supports lazy scripts.
-  MOZ_ASSERT(isUsingInterpreterTrampoline(rt));
-#endif
+  MOZ_ASSERT_IF(jit::HasJitBackend(), isUsingInterpreterTrampoline(rt));
 
   // Without bytecode, the script counts are invalid so destroy them if they
   // still exist.
@@ -2363,11 +2378,10 @@ bool JSScript::fullyInitFromStencil(
   // here will be released by the UniquePtr.
   Rooted<UniquePtr<PrivateScriptData>> lazyData(cx);
 
-#ifndef JS_CODEGEN_NONE
   // Whether we are a newborn script or an existing lazy script, we should
   // already be pointing to the interpreter trampoline.
-  MOZ_ASSERT(script->isUsingInterpreterTrampoline(cx->runtime()));
-#endif
+  MOZ_ASSERT_IF(jit::HasJitBackend(),
+                script->isUsingInterpreterTrampoline(cx->runtime()));
 
   // If we are using an existing lazy script, record enough info to be able to
   // rollback on failure.
@@ -3131,11 +3145,10 @@ BaseScript* BaseScript::New(JSContext* cx, JS::Handle<JSFunction*> function,
     return nullptr;
   }
 
-#ifndef JS_CODEGEN_NONE
-  uint8_t* stubEntry = cx->runtime()->jitRuntime()->interpreterStub().value;
-#else
   uint8_t* stubEntry = nullptr;
-#endif
+  if (jit::HasJitBackend()) {
+    stubEntry = cx->runtime()->jitRuntime()->interpreterStub().value;
+  }
 
   MOZ_ASSERT_IF(function,
                 function->compartment() == sourceObject->compartment());

@@ -42,6 +42,7 @@
 #include "nsAbsoluteContainingBlock.h"
 #include "nsCSSPseudoElements.h"
 #include "nsCheckboxRadioFrame.h"
+#include "nsCRT.h"
 #include "nsAtom.h"
 #include "nsIFrameInlines.h"
 #include "nsGkAtoms.h"
@@ -1435,7 +1436,7 @@ nsCSSFrameConstructor::nsCSSFrameConstructor(Document* aDocument,
         FrameCtorDebugFlags* flag = gFlags;
         FrameCtorDebugFlags* limit = gFlags + NUM_DEBUG_FLAGS;
         while (flag < limit) {
-          if (PL_strcasecmp(flag->name, flags) == 0) {
+          if (nsCRT::strcasecmp(flag->name, flags) == 0) {
             *(flag->on) = true;
             printf("nsCSSFrameConstructor: setting %s debug flag on\n",
                    flag->name);
@@ -6397,7 +6398,10 @@ void nsCSSFrameConstructor::IssueSingleInsertNofications(
     InsertionKind aInsertionKind) {
   for (nsIContent* child = aStartChild; child != aEndChild;
        child = child->GetNextSibling()) {
-    MOZ_ASSERT(!child->GetPrimaryFrame());
+    // XXX the GetContent() != child check is needed due to bug 135040.
+    // Remove it once that's fixed.
+    MOZ_ASSERT(!child->GetPrimaryFrame() ||
+               child->GetPrimaryFrame()->GetContent() != child);
 
     // Call ContentRangeInserted with this node.
     ContentRangeInserted(child, child->GetNextSibling(), aInsertionKind);
