@@ -18,6 +18,8 @@
       this.addEventListener("TabAttrModified", this);
       this.addEventListener("TabHide", this);
       this.addEventListener("TabShow", this);
+      this.addEventListener("TabPinned", this);
+      this.addEventListener("TabUnpinned", this);
       this.addEventListener("transitionend", this);
       this.addEventListener("dblclick", this);
       this.addEventListener("click", this);
@@ -142,6 +144,14 @@
 
     on_TabAttrModified(event) {
       if (
+        ["soundplaying", "muted", "activemedia-blocked", "sharing"].some(attr =>
+          event.detail.changed.includes(attr)
+        )
+      ) {
+        this.updateTabIndicatorAttr(event.target);
+      }
+
+      if (
         event.detail.changed.includes("soundplaying") &&
         event.target.hidden
       ) {
@@ -159,6 +169,14 @@
       if (event.target.soundPlaying) {
         this._hiddenSoundPlayingStatusChanged(event.target);
       }
+    }
+
+    on_TabPinned(event) {
+      this.updateTabIndicatorAttr(event.target);
+    }
+
+    on_TabUnpinned(event) {
+      this.updateTabIndicatorAttr(event.target);
     }
 
     on_transitionend(event) {
@@ -852,14 +870,7 @@
 
       // screen.availLeft et. al. only check the screen that this window is on,
       // but we want to look at the screen the tab is being dropped onto.
-      var screen = Cc["@mozilla.org/gfx/screenmanager;1"]
-        .getService(Ci.nsIScreenManager)
-        .screenForRect(
-          eX * window.devicePixelRatio,
-          eY * window.devicePixelRatio,
-          1,
-          1
-        );
+      var screen = event.screen;
       var fullX = {},
         fullY = {},
         fullWidth = {},
@@ -2080,6 +2091,22 @@
       }
 
       CustomizableUI.removeListener(this);
+    }
+
+    updateTabIndicatorAttr(tab) {
+      const theseAttributes = ["soundplaying", "muted", "activemedia-blocked"];
+      const notTheseAttributes = ["pinned", "sharing", "crashed"];
+
+      if (notTheseAttributes.some(attr => tab.getAttribute(attr))) {
+        tab.removeAttribute("indicator-replaces-favicon");
+        return;
+      }
+
+      if (theseAttributes.some(attr => tab.getAttribute(attr))) {
+        tab.setAttribute("indicator-replaces-favicon", true);
+      } else {
+        tab.removeAttribute("indicator-replaces-favicon");
+      }
     }
   }
 

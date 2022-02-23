@@ -3,11 +3,21 @@
 
 "use strict";
 
+const { EnterprisePolicyTesting } = ChromeUtils.import(
+  "resource://testing-common/EnterprisePolicyTesting.jsm"
+);
+
 let { TelemetryTestUtils } = ChromeUtils.import(
   "resource://testing-common/TelemetryTestUtils.jsm"
 );
 
+async function clearPolicies() {
+  // Ensure no active policies are set
+  await EnterprisePolicyTesting.setupPolicyEngineWithJson("");
+}
+
 add_task(async function testDefaultUIWithoutTemplatePref() {
+  await clearPolicies();
   await openPreferencesViaOpenPreferencesAPI("paneGeneral", {
     leaveOpen: true,
   });
@@ -66,6 +76,32 @@ add_task(async function testDefaultUIWithoutTemplatePref() {
     "entrypoint_experiment should not be set"
   );
   BrowserTestUtils.removeTab(openedTab);
+  BrowserTestUtils.removeTab(tab);
+});
+
+add_task(async function testDefaulEmailClick() {
+  await clearPolicies();
+  await openPreferencesViaOpenPreferencesAPI("paneGeneral", {
+    leaveOpen: true,
+  });
+  let doc = gBrowser.contentDocument;
+  let tab = gBrowser.selectedTab;
+
+  let moreFromMozillaCategory = doc.getElementById(
+    "category-more-from-mozilla"
+  );
+  moreFromMozillaCategory.click();
+
+  const expectedUrl = "https://www.mozilla.org/firefox/mobile/get-app/?v=mfm";
+  let sendEmailLink = doc.getElementById("default-qr-code-send-email");
+
+  Assert.ok(
+    sendEmailLink.href.startsWith(expectedUrl),
+    `Expected URL ${sendEmailLink.href}`
+  );
+
+  let searchParams = new URL(sendEmailLink.href).searchParams;
+  Assert.equal(searchParams.get("v"), "mfm", "expected send email param set");
   BrowserTestUtils.removeTab(tab);
 });
 
@@ -129,6 +165,7 @@ add_task(async function test_aboutpreferences_event_telemetry() {
 });
 
 add_task(async function test_aboutpreferences_simple_template() {
+  await clearPolicies();
   await SpecialPowers.pushPrefEnv({
     set: [
       ["browser.preferences.moreFromMozilla", true],
@@ -157,6 +194,7 @@ add_task(async function test_aboutpreferences_simple_template() {
 });
 
 add_task(async function test_aboutpreferences_advanced_template() {
+  await clearPolicies();
   await SpecialPowers.pushPrefEnv({
     set: [
       ["browser.preferences.moreFromMozilla", true],
@@ -193,6 +231,7 @@ add_task(async function test_aboutpreferences_advanced_template() {
 });
 
 add_task(async function test_aboutpreferences_clickBtnVPN() {
+  await clearPolicies();
   await SpecialPowers.pushPrefEnv({
     set: [
       ["browser.preferences.moreFromMozilla", true],
@@ -306,6 +345,7 @@ add_task(async function test_aboutpreferences_clickBtnMobile() {
 });
 
 add_task(async function test_aboutpreferences_search() {
+  await clearPolicies();
   await SpecialPowers.pushPrefEnv({
     set: [
       ["browser.preferences.moreFromMozilla", true],

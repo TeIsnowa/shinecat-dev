@@ -41,8 +41,34 @@ using mozilla::ipc::UtilityProcessManager;
 using mozilla::ipc::UtilityProcessParent;
 using FlushFOGDataPromise = mozilla::dom::ContentParent::FlushFOGDataPromise;
 
-namespace mozilla {
-namespace glean {
+namespace geckoprofiler::markers {
+
+using namespace mozilla;
+
+struct ProcessingTimeMarker {
+  static constexpr Span<const char> MarkerTypeName() {
+    return MakeStringSpan("ProcessingTime");
+  }
+  static void StreamJSONMarkerData(baseprofiler::SpliceableJSONWriter& aWriter,
+                                   int64_t aDiffMs,
+                                   const ProfilerString8View& aType) {
+    aWriter.IntProperty("time", aDiffMs);
+    aWriter.StringProperty("label", aType);
+  }
+  static MarkerSchema MarkerTypeDisplay() {
+    using MS = MarkerSchema;
+    MS schema{MS::Location::MarkerChart, MS::Location::MarkerTable};
+    schema.AddKeyLabelFormat("time", "Recorded Time", MS::Format::Milliseconds);
+    schema.SetTooltipLabel("{marker.name} - {marker.data.label}");
+    schema.SetTableLabel(
+        "{marker.name} - {marker.data.label}: {marker.data.time}");
+    return schema;
+  }
+};
+
+}  // namespace geckoprofiler::markers
+
+namespace mozilla::glean {
 
 void RecordPowerMetrics() {
   static uint64_t previousCpuTime = 0, previousGpuTime = 0;
@@ -54,7 +80,9 @@ void RecordPowerMetrics() {
   }
 
   uint64_t gpuTime, newGpuTime = 0;
-  if (NS_SUCCEEDED(GetGpuTimeSinceProcessStartInMs(&gpuTime)) &&
+  // Avoid loading gdi32.dll for the Socket process where the GPU is never used.
+  if (!XRE_IsSocketProcess() &&
+      NS_SUCCEEDED(GetGpuTimeSinceProcessStartInMs(&gpuTime)) &&
       gpuTime > previousGpuTime) {
     newGpuTime = gpuTime - previousGpuTime;
   }
@@ -116,6 +144,8 @@ void RecordPowerMetrics() {
     }
     power::total_cpu_time_ms.Add(nNewCpuTime);
     power::cpu_time_per_process_type_ms.Get(type).Add(nNewCpuTime);
+    PROFILER_MARKER("CPU Time", OTHER, {}, ProcessingTimeMarker, nNewCpuTime,
+                    type);
     previousCpuTime += newCpuTime;
   }
 
@@ -126,6 +156,8 @@ void RecordPowerMetrics() {
     }
     power::total_gpu_time_ms.Add(nNewGpuTime);
     power::gpu_time_per_process_type_ms.Get(type).Add(nNewGpuTime);
+    PROFILER_MARKER("GPU Time", OTHER, {}, ProcessingTimeMarker, nNewGpuTime,
+                    type);
     previousGpuTime += newGpuTime;
   }
 }
@@ -341,5 +373,4 @@ void TestTriggerMetrics(uint32_t aProcessType,
   }
 }
 
-}  // namespace glean
-}  // namespace mozilla
+}  // namespace mozilla::glean

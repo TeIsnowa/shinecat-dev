@@ -400,7 +400,7 @@ already_AddRefed<BrowsingContext> BrowsingContext::CreateDetached(
   fields.mDefaultLoadFlags =
       inherit ? inherit->GetDefaultLoadFlags() : nsIRequest::LOAD_NORMAL;
 
-  fields.mOrientationLock = mozilla::hal::eScreenOrientation_None;
+  fields.mOrientationLock = mozilla::hal::ScreenOrientation::None;
 
   fields.mUseGlobalHistory = inherit ? inherit->GetUseGlobalHistory() : false;
 
@@ -3562,7 +3562,7 @@ void BrowsingContext::SessionHistoryCommit(
 
 void BrowsingContext::SetActiveSessionHistoryEntry(
     const Maybe<nsPoint>& aPreviousScrollPos, SessionHistoryInfo* aInfo,
-    uint32_t aLoadType, uint32_t aUpdatedCacheKey) {
+    uint32_t aLoadType, uint32_t aUpdatedCacheKey, bool aUpdateLength) {
   if (XRE_IsContentProcess()) {
     // XXX Why we update cache key only in content process case?
     if (aUpdatedCacheKey != 0) {
@@ -3570,9 +3570,11 @@ void BrowsingContext::SetActiveSessionHistoryEntry(
     }
 
     nsID changeID = {};
-    RefPtr<ChildSHistory> shistory = Top()->GetChildSessionHistory();
-    if (shistory) {
-      changeID = shistory->AddPendingHistoryChange();
+    if (aUpdateLength) {
+      RefPtr<ChildSHistory> shistory = Top()->GetChildSessionHistory();
+      if (shistory) {
+        changeID = shistory->AddPendingHistoryChange();
+      }
     }
     ContentChild::GetSingleton()->SendSetActiveSessionHistoryEntry(
         this, aPreviousScrollPos, *aInfo, aLoadType, aUpdatedCacheKey,

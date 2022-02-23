@@ -11,6 +11,7 @@
 #include "mozilla/dom/ReadableStreamBYOBReaderBinding.h"
 #include "mozilla/dom/ReadableStreamGenericReader.h"
 #include "mozilla/dom/ReadIntoRequest.h"
+#include "mozilla/dom/RootedDictionary.h"
 #include "nsCOMPtr.h"
 #include "nsISupportsImpl.h"
 
@@ -19,8 +20,7 @@
 #include "mozilla/dom/ReadableStreamBYOBRequest.h"
 #include "mozilla/dom/ReadableStreamBYOBReader.h"
 
-namespace mozilla {
-namespace dom {
+namespace mozilla::dom {
 
 NS_IMPL_CYCLE_COLLECTION_WRAPPERCACHE_INHERITED(ReadableStreamBYOBReader,
                                                 ReadableStreamGenericReader,
@@ -107,7 +107,7 @@ struct Read_ReadIntoRequest final : public ReadIntoRequest {
       return;
     }
 
-    ReadableStreamBYOBReadResult result;
+    RootedDictionary<ReadableStreamBYOBReadResult> result(aCx);
     result.mValue.Construct();
     result.mValue.Value().Init(chunk);
     result.mDone.Construct(false);
@@ -122,7 +122,7 @@ struct Read_ReadIntoRequest final : public ReadIntoRequest {
     //
     // close steps, given chunk:
     // Resolve promise with «[ "value" → chunk, "done" → true ]».
-    ReadableStreamBYOBReadResult result;
+    RootedDictionary<ReadableStreamBYOBReadResult> result(aCx);
     if (aChunk.isObject()) {
       // We need to wrap this as the chunk could have come from
       // another compartment.
@@ -149,7 +149,7 @@ struct Read_ReadIntoRequest final : public ReadIntoRequest {
   }
 
  protected:
-  virtual ~Read_ReadIntoRequest() = default;
+  ~Read_ReadIntoRequest() override = default;
 };
 
 NS_IMPL_CYCLE_COLLECTION(ReadIntoRequest)
@@ -349,5 +349,4 @@ already_AddRefed<ReadableStreamBYOBReader> AcquireReadableStreamBYOBReader(
   return reader.forget();
 }
 
-}  // namespace dom
-}  // namespace mozilla
+}  // namespace mozilla::dom

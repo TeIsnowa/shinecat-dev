@@ -272,7 +272,7 @@ SearchService.prototype = {
       this._addObservers();
     } catch (ex) {
       this._initRV = ex.result !== undefined ? ex.result : Cr.NS_ERROR_FAILURE;
-      logConsole.error("_init: failure initializing search:", ex.result);
+      logConsole.error("_init: failure initializing search:", ex);
     }
 
     this._initialized = true;
@@ -597,10 +597,12 @@ SearchService.prototype = {
 
     if (
       prevCurrentEngine &&
+      newCurrentEngine &&
       newCurrentEngine !== prevCurrentEngine &&
       prevMetaData &&
       settings.metaData &&
-      !this._hasSettingsMetaDataChanged(prevMetaData, settings.metaData)
+      !this._hasUserMetaDataChanged(prevMetaData) &&
+      Services.prefs.getBoolPref("browser.search.removeEngineInfobar.enabled")
     ) {
       this._showRemovalOfSearchEngineNotificationBox(
         prevCurrentEngine,
@@ -837,7 +839,8 @@ SearchService.prototype = {
       if (
         prevMetaData &&
         settings.metaData &&
-        !this._hasSettingsMetaDataChanged(prevMetaData, settings.metaData)
+        !this._hasUserMetaDataChanged(prevMetaData) &&
+        Services.prefs.getBoolPref("browser.search.removeEngineInfobar.enabled")
       ) {
         this._showRemovalOfSearchEngineNotificationBox(
           prevCurrentEngine.name,
@@ -924,6 +927,7 @@ SearchService.prototype = {
     this._searchDefault = null;
     this._searchPrivateDefault = null;
     this._maybeReloadDebounce = false;
+    this._settings._batchTask?.disarm();
   },
 
   _addEngineToStore(engine, skipDuplicateCheck = false) {
@@ -2874,14 +2878,12 @@ SearchService.prototype = {
   ]),
 
   /**
-   * @param {object} prevMetaDataObj
-   *   settings metaData Object
-   * @param {object} currentMetaDataObj
-   *   settings metaData Object
+   * @param {object} metaData
    * @returns {boolean}
-   *    Returns true if the metaData objects have different properties values.
+   *    Returns true if metaData has different property values than
+   *    the cached _metaData.
    */
-  _hasSettingsMetaDataChanged(prevMetaDataObj, currentMetaDataObj) {
+  _hasUserMetaDataChanged(metaData) {
     let metaDataProperties = [
       "locale",
       "region",
@@ -2890,9 +2892,9 @@ SearchService.prototype = {
       "distroID",
     ];
 
-    return metaDataProperties.some(
-      p => prevMetaDataObj?.[p] != currentMetaDataObj?.[p]
-    );
+    return metaDataProperties.some(p => {
+      return metaData?.[p] !== this._settings.getAttribute(p);
+    });
   },
 
   /**

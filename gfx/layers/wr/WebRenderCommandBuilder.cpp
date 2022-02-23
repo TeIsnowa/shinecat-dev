@@ -86,6 +86,7 @@ struct BlobItemData {
   // invalidation region
   UniquePtr<nsDisplayItemGeometry> mGeometry;
   DisplayItemClip mClip;
+  bool mInvisible;
   bool mUsed;  // initialized near construction
   // XXX: only used for debugging
   bool mInvalid;
@@ -100,7 +101,7 @@ struct BlobItemData {
   std::vector<RefPtr<SourceSurface>> mExternalSurfaces;
 
   BlobItemData(DIGroup* aGroup, nsDisplayItem* aItem)
-      : mUsed(false), mGroup(aGroup) {
+      : mInvisible(false), mUsed(false), mGroup(aGroup) {
     mInvalid = false;
     mDisplayItemKey = aItem->GetPerFrameKey();
     AddFrame(aItem->Frame());
@@ -297,6 +298,10 @@ struct DIGroup {
   // This is the intersection of mVisibleRect and mLastVisibleRect
   // we ensure that mInvalidRect is contained in mPreservedRect
   LayerIntRect mPreservedRect;
+  // mHitTestBounds is the same as mActualBounds except for the bounds
+  // of invisible items which are accounted for in the former but not
+  // in the latter.
+  LayerIntRect mHitTestBounds;
   LayerIntRect mActualBounds;
   int32_t mAppUnitsPerDevPixel;
   gfx::Size mScale;
@@ -538,7 +543,11 @@ struct DIGroup {
         }
       }
     }
-    mActualBounds.OrWith(aData->mRect);
+
+    mHitTestBounds.OrWith(aData->mRect);
+    if (!aData->mInvisible) {
+      mActualBounds.OrWith(aData->mRect);
+    }
     aData->mClip = clip;
     GP("post mInvalidRect: %d %d %d %d\n", mInvalidRect.x, mInvalidRect.y,
        mInvalidRect.width, mInvalidRect.height);
@@ -552,6 +561,16 @@ struct DIGroup {
                 nsDisplayItem* aStartItem, nsDisplayItem* aEndItem) {
     GP("\n\n");
     GP("Begin EndGroup\n");
+
+    LayoutDeviceToLayerScale2D scale(mScale.width, mScale.height);
+
+    auto hitTestRect = mVisibleRect.Intersect(ViewAs<LayerPixel>(
+        mHitTestBounds, PixelCastJustification::LayerIsImage));
+    if (!hitTestRect.IsEmpty()) {
+      auto deviceHitTestRect =
+          (LayerRect(hitTestRect) - mResidualOffset) / scale;
+      PushHitTest(aBuilder, deviceHitTestRect);
+    }
 
     mVisibleRect = mVisibleRect.Intersect(ViewAs<LayerPixel>(
         mActualBounds, PixelCastJustification::LayerIsImage));
@@ -578,7 +597,6 @@ struct DIGroup {
     IntSize dtSize = mVisibleRect.Size().ToUnknownSize();
     // The actual display item's size shouldn't have the scale factored in
     // Round the bounds out to leave space for unsnapped content
-    LayoutDeviceToLayerScale2D scale(mScale.width, mScale.height);
     LayoutDeviceRect itemBounds =
         (LayerRect(mVisibleRect) - mResidualOffset) / scale;
 
@@ -665,6 +683,7 @@ struct DIGroup {
       // we don't want to send a new image that doesn't have any
       // items in it
       if (!hasItems || mVisibleRect.IsEmpty()) {
+        GP("Skipped group with no items\n");
         return;
       }
 
@@ -723,6 +742,20 @@ struct DIGroup {
     auto rendering = wr::ImageRendering::Auto;
     bool backfaceHidden = false;
 
+    // XXX - clipping the item against the paint rect breaks some content.
+    // cf. Bug 1455422.
+    // wr::LayoutRect clip = wr::ToLayoutRect(bounds.Intersect(mVisibleRect));
+
+    aBuilder.PushImage(dest, dest, !backfaceHidden, rendering,
+                       wr::AsImageKey(*mKey));
+  }
+
+  void PushHitTest(wr::DisplayListBuilder& aBuilder,
+                   const LayoutDeviceRect& bounds) {
+    wr::LayoutRect dest = wr::ToLayoutRect(bounds);
+    GP("PushHitTest: %f %f %f %f\n", dest.min.x, dest.min.y, dest.max.x,
+       dest.max.y);
+
     // We don't really know the exact shape of this blob because it may contain
     // SVG shapes. Also mHitInfo may be a combination of hit info flags from
     // different shapes so generate an irregular-area hit-test region for it.
@@ -731,15 +764,9 @@ struct DIGroup {
       hitInfo += CompositorHitTestFlags::eIrregularArea;
     }
 
-    // XXX - clipping the item against the paint rect breaks some content.
-    // cf. Bug 1455422.
-    // wr::LayoutRect clip = wr::ToLayoutRect(bounds.Intersect(mVisibleRect));
-
+    bool backfaceHidden = false;
     aBuilder.PushHitTest(dest, dest, !backfaceHidden, mScrollId, hitInfo,
                          SideBits::eNone);
-
-    aBuilder.PushImage(dest, dest, !backfaceHidden, rendering,
-                       wr::AsImageKey(*mKey));
   }
 
   void PaintItemRange(Grouper* aGrouper, nsDisplayList::Iterator aIter,
@@ -753,6 +780,10 @@ struct DIGroup {
       MOZ_ASSERT(item);
 
       BlobItemData* data = GetBlobItemData(item);
+      if (data->mInvisible) {
+        continue;
+      }
+
       LayerIntRect bounds = data->mRect;
       auto bottomRight = bounds.BottomRight();
 
@@ -1215,6 +1246,7 @@ void Grouper::ConstructGroups(nsDisplayListBuilder* aDisplayListBuilder,
           groupData->mFollowingGroup.mVisibleRect.Intersect(
               groupData->mFollowingGroup.mLastVisibleRect);
       groupData->mFollowingGroup.mActualBounds = LayerIntRect();
+      groupData->mFollowingGroup.mHitTestBounds = LayerIntRect();
 
       currentGroup->EndGroup(aCommandBuilder->mManager, aDisplayListBuilder,
                              aBuilder, aResources, this, startOfCurrentGroup,
@@ -1276,6 +1308,7 @@ bool Grouper::ConstructItemInsideInactive(
    * set it to 'true' we ensure that we're not using the value from the last
    * time that we painted */
   data->mInvalid = false;
+  data->mInvisible = aItem->IsInvisible();
 
   // we compute the geometry change here because we have the transform around
   // still
@@ -1493,6 +1526,7 @@ void WebRenderCommandBuilder::DoGroupingForDisplayList(
   group.mLayerBounds = layerBounds;
   group.mVisibleRect = visibleRect;
   group.mActualBounds = LayerIntRect();
+  group.mHitTestBounds = LayerIntRect();
   group.mPreservedRect = group.mVisibleRect.Intersect(group.mLastVisibleRect);
   group.mAppUnitsPerDevPixel = appUnitsPerDevPixel;
   group.mClippedImageBounds = layerBounds;
@@ -1517,7 +1551,6 @@ WebRenderCommandBuilder::WebRenderCommandBuilder(
 
 void WebRenderCommandBuilder::Destroy() {
   mLastCanvasDatas.Clear();
-  mLastLocalCanvasDatas.Clear();
   ClearCachedResources();
 }
 
@@ -1529,14 +1562,10 @@ void WebRenderCommandBuilder::EmptyTransaction() {
       canvas->UpdateCompositableClientForEmptyTransaction();
     }
   }
-  for (RefPtr<WebRenderLocalCanvasData> canvasData : mLastLocalCanvasDatas) {
-    canvasData->RefreshExternalImage();
-    canvasData->RequestFrameReadback();
-  }
 }
 
 bool WebRenderCommandBuilder::NeedsEmptyTransaction() {
-  return !mLastCanvasDatas.IsEmpty() || !mLastLocalCanvasDatas.IsEmpty();
+  return !mLastCanvasDatas.IsEmpty();
 }
 
 void WebRenderCommandBuilder::BuildWebRenderCommands(
@@ -1554,7 +1583,6 @@ void WebRenderCommandBuilder::BuildWebRenderCommands(
 
   mBuilderDumpIndex = 0;
   mLastCanvasDatas.Clear();
-  mLastLocalCanvasDatas.Clear();
   mLastAsr = nullptr;
   mContainsSVGGroup = false;
   MOZ_ASSERT(mDumpIndent == 0);
@@ -2057,6 +2085,24 @@ bool WebRenderCommandBuilder::PushImageProvider(
   aBuilder.PushImage(r, c, !aItem->BackfaceIsHidden(), rendering, key.value());
 
   return true;
+}
+
+void WebRenderCommandBuilder::PushInProcessImage(
+    nsDisplayItem* aItem, const CompositableHandle& aHandle,
+    mozilla::wr::DisplayListBuilder& aBuilder,
+    mozilla::wr::IpcResourceUpdateQueue& aResources,
+    const StackingContextHelper& aSc,
+    const LayoutDeviceRect& aAsyncImageBounds) {
+  RefPtr<WebRenderInProcessImageData> imageData =
+      CreateOrRecycleWebRenderUserData<WebRenderInProcessImageData>(aItem);
+  MOZ_ASSERT(imageData);
+
+  auto rendering = wr::ToImageRendering(aItem->Frame()->UsedImageRendering());
+  LayoutDeviceRect scBounds(LayoutDevicePoint(0, 0), aAsyncImageBounds.Size());
+  imageData->CreateWebRenderCommands(aBuilder, aHandle, aSc, aAsyncImageBounds,
+                                     scBounds, VideoInfo::Rotation::kDegree_0,
+                                     rendering, wr::MixBlendMode::Normal,
+                                     !aItem->BackfaceIsHidden());
 }
 
 static void PaintItemByDrawTarget(nsDisplayItem* aItem, gfx::DrawTarget* aDT,
@@ -2676,9 +2722,6 @@ void WebRenderCommandBuilder::RemoveUnusedAndResetWebRenderUserData() {
       switch (data->GetType()) {
         case WebRenderUserData::UserDataType::eCanvas:
           mLastCanvasDatas.Remove(data->AsCanvasData());
-          break;
-        case WebRenderUserData::UserDataType::eLocalCanvas:
-          mLastLocalCanvasDatas.Remove(data->AsLocalCanvasData());
           break;
         case WebRenderUserData::UserDataType::eAnimation:
           EffectCompositor::ClearIsRunningOnCompositor(

@@ -6,6 +6,7 @@
 #ifndef _LocalAccessible_H_
 #define _LocalAccessible_H_
 
+#include "mozilla/ComputedStyle.h"
 #include "mozilla/a11y/Accessible.h"
 #include "mozilla/a11y/AccTypes.h"
 #include "mozilla/a11y/RelationType.h"
@@ -136,7 +137,7 @@ class LocalAccessible : public nsISupports, public Accessible {
   /**
    * Get the value of this accessible.
    */
-  virtual void Value(nsString& aValue) const;
+  virtual void Value(nsString& aValue) const override;
 
   /**
    * Get help string for the accessible.
@@ -170,11 +171,6 @@ class LocalAccessible : public nsISupports, public Accessible {
    * roles).
    */
   mozilla::a11y::role ARIARole();
-
-  /**
-   * Return a landmark role if applied.
-   */
-  virtual nsAtom* LandmarkRole() const;
 
   /**
    * Returns enumerated accessible role from native markup (see constants in
@@ -426,12 +422,12 @@ class LocalAccessible : public nsISupports, public Accessible {
   /**
    * Selects the accessible within its container if applicable.
    */
-  virtual void SetSelected(bool aSelect);
+  virtual void SetSelected(bool aSelect) override;
 
   /**
    * Select the accessible within its container.
    */
-  void TakeSelection();
+  virtual void TakeSelection() override;
 
   /**
    * Focus the accessible.
@@ -531,11 +527,6 @@ class LocalAccessible : public nsISupports, public Accessible {
   virtual bool IsLink() const override;
 
   /**
-   * Return the end offset of the link within the parent accessible.
-   */
-  virtual uint32_t EndOffset();
-
-  /**
    * Return true if the link is valid (e. g. points to a valid URL).
    */
   inline bool IsLinkValid() {
@@ -575,42 +566,42 @@ class LocalAccessible : public nsISupports, public Accessible {
   /**
    * Return an array of selected items.
    */
-  virtual void SelectedItems(nsTArray<LocalAccessible*>* aItems);
+  virtual void SelectedItems(nsTArray<Accessible*>* aItems) override;
 
   /**
    * Return the number of selected items.
    */
-  virtual uint32_t SelectedItemCount();
+  virtual uint32_t SelectedItemCount() override;
 
   /**
    * Return selected item at the given index.
    */
-  virtual LocalAccessible* GetSelectedItem(uint32_t aIndex);
+  virtual Accessible* GetSelectedItem(uint32_t aIndex) override;
 
   /**
    * Determine if item at the given index is selected.
    */
-  virtual bool IsItemSelected(uint32_t aIndex);
+  virtual bool IsItemSelected(uint32_t aIndex) override;
 
   /**
    * Add item at the given index the selection. Return true if success.
    */
-  virtual bool AddItemToSelection(uint32_t aIndex);
+  virtual bool AddItemToSelection(uint32_t aIndex) override;
 
   /**
    * Remove item at the given index from the selection. Return if success.
    */
-  virtual bool RemoveItemFromSelection(uint32_t aIndex);
+  virtual bool RemoveItemFromSelection(uint32_t aIndex) override;
 
   /**
    * Select all items. Return true if success.
    */
-  virtual bool SelectAll();
+  virtual bool SelectAll() override;
 
   /**
    * Unselect all items. Return true if success.
    */
-  virtual bool UnselectAll();
+  virtual bool UnselectAll() override;
 
   //////////////////////////////////////////////////////////////////////////////
   // Value (numeric value interface)
@@ -790,7 +781,11 @@ class LocalAccessible : public nsISupports, public Accessible {
    */
   void SendCache(uint64_t aCacheDomain, CacheUpdateType aUpdate);
 
+  void MaybeQueueCacheUpdateForStyleChanges();
+
   virtual nsAtom* TagName() const override;
+
+  virtual already_AddRefed<nsAtom> DisplayStyle() const override;
 
  protected:
   virtual ~LocalAccessible();
@@ -974,6 +969,8 @@ class LocalAccessible : public nsISupports, public Accessible {
 
   virtual AccGroupInfo* GetOrCreateGroupInfo() override;
 
+  virtual bool HasPrimaryAction() const override;
+
   virtual void ARIAGroupPosition(int32_t* aLevel, int32_t* aSetSize,
                                  int32_t* aPosInSet) const override;
 
@@ -987,6 +984,25 @@ class LocalAccessible : public nsISupports, public Accessible {
   nsTArray<LocalAccessible*> mChildren;
   int32_t mIndexInParent;
   Maybe<nsRect> mBounds;
+
+  /**
+   * Maintain a reference to the ComputedStyle of our frame so we can
+   * send cache updates when style changes are observed.
+   *
+   * This RefPtr is initialised in BundleFieldsForCache to the ComputedStyle
+   * for our initial frame.
+   * Style changes are observed in one of two ways:
+   * 1. Style changes on the same frame are observed in
+   * nsIFrame::DidSetComputedStyle.
+   * 2. Style changes for reconstructed frames are handled in
+   * DocAccessible::PruneOrInsertSubtree.
+   * In both cases, we call into MaybeQueueCacheUpdateForStyleChanges. There, we
+   * compare a11y-relevant properties in mOldComputedStyle with the current
+   * ComputedStyle fetched from GetFrame()->Style(). Finally, we send cache
+   * updates for attributes affected by the style change and update
+   * mOldComputedStyle to the style of our current frame.
+   */
+  RefPtr<const ComputedStyle> mOldComputedStyle;
 
   static const uint8_t kStateFlagsBits = 11;
   static const uint8_t kContextFlagsBits = 3;

@@ -2828,7 +2828,7 @@ BrowserGlue.prototype = {
   _scheduleBestEffortUserIdleTasks() {
     const idleTasks = [
       () => {
-        // Telemetry for master-password - we do this after a delay as it
+        // Telemetry for primary-password - we do this after a delay as it
         // can cause IO if NSS/PSM has not already initialized.
         let tokenDB = Cc["@mozilla.org/security/pk11tokendb;1"].getService(
           Ci.nsIPK11TokenDB
@@ -3404,7 +3404,7 @@ BrowserGlue.prototype = {
   _migrateUI: function BG__migrateUI() {
     // Use an increasing number to keep track of the current migration state.
     // Completely unrelated to the current Firefox release number.
-    const UI_VERSION = 122;
+    const UI_VERSION = 124;
     const BROWSER_DOCURL = AppConstants.BROWSER_CHROME_URL;
 
     const PROFILE_DIR = Services.dirsvc.get("ProfD", Ci.nsIFile).path;
@@ -4126,6 +4126,42 @@ BrowserGlue.prototype = {
     // Bug 1745248: Due to multiple backouts, do not use UI Version 123
     // as this version is most likely set for the Nightly channel
 
+    if (currentUIVersion < 124) {
+      // Migrate "extensions.formautofill.available" and
+      // "extensions.formautofill.creditCards.available" from old to new prefs
+      const oldFormAutofillModule = "extensions.formautofill.available";
+      const oldCreditCardsAvailable =
+        "extensions.formautofill.creditCards.available";
+      const newCreditCardsAvailable =
+        "extensions.formautofill.creditCards.supported";
+      const newAddressesAvailable =
+        "extensions.formautofill.addresses.supported";
+      if (Services.prefs.prefHasUserValue(oldFormAutofillModule)) {
+        let moduleAvailability = Services.prefs.getCharPref(
+          oldFormAutofillModule
+        );
+        if (moduleAvailability == "on") {
+          Services.prefs.setCharPref(newAddressesAvailable, moduleAvailability);
+          Services.prefs.setCharPref(
+            newCreditCardsAvailable,
+            Services.prefs.getBoolPref(oldCreditCardsAvailable) ? "on" : "off"
+          );
+        }
+
+        if (moduleAvailability == "off") {
+          Services.prefs.setCharPref(
+            newCreditCardsAvailable,
+            moduleAvailability
+          );
+          Services.prefs.setCharPref(newAddressesAvailable, moduleAvailability);
+        }
+      }
+
+      // after migrating, clear old prefs so we can remove them later.
+      Services.prefs.clearUserPref(oldFormAutofillModule);
+      Services.prefs.clearUserPref(oldCreditCardsAvailable);
+    }
+
     // Update the migration version.
     Services.prefs.setIntPref("browser.migration.version", UI_VERSION);
   },
@@ -4623,6 +4659,7 @@ BrowserGlue.prototype = {
       "pictureinpicture.settings",
       true
     );
+    Services.telemetry.setEventRecordingEnabled("pictureinpicture", true);
 
     const TOGGLE_ENABLED_PREF =
       "media.videocontrols.picture-in-picture.video-toggle.enabled";

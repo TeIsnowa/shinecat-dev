@@ -1445,7 +1445,7 @@ var Policies = {
         setAndLockPref("pdfjs.disabled", !param.Enabled);
       }
       if ("EnablePermissions" in param) {
-        setAndLockPref("pdfjs.enablePermissions", !param.Enabled);
+        setAndLockPref("pdfjs.enablePermissions", param.EnablePermissions);
       }
     },
   },
@@ -2158,10 +2158,17 @@ var Policies = {
       if ("UrlbarInterventions" in param && !param.UrlbarInterventions) {
         manager.disallowFeature("urlbarinterventions");
       }
-      if ("SkipOnboarding") {
+      if ("SkipOnboarding" in param) {
         PoliciesUtils.setDefaultPref(
           "browser.aboutwelcome.enabled",
           !param.SkipOnboarding,
+          locked
+        );
+      }
+      if ("MoreFromMozilla" in param) {
+        PoliciesUtils.setDefaultPref(
+          "browser.preferences.moreFromMozilla",
+          param.MoreFromMozilla,
           locked
         );
       }

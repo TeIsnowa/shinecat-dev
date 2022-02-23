@@ -813,8 +813,17 @@ class NPZCSupport final
       return;
     }
 
-    APZEventResult result =
-        controller->InputBridge()->ReceiveInputEvent(aInput);
+    APZInputBridge::InputBlockCallback callback;
+    if (aReturnResult) {
+      callback = [aReturnResult = java::GeckoResult::GlobalRef(aReturnResult)](
+                     uint64_t aInputBlockId,
+                     const APZHandledResult& aHandledResult) {
+        aReturnResult->Complete(ConvertAPZHandledResult(aHandledResult));
+      };
+    }
+    APZEventResult result = controller->InputBridge()->ReceiveInputEvent(
+        aInput, std::move(callback));
+
     if (result.GetStatus() == nsEventStatus_eConsumeNoDefault) {
       if (aReturnResult) {
         aReturnResult->Complete(java::PanZoomController::InputResultDetail::New(
@@ -831,12 +840,7 @@ class NPZCSupport final
       window->DispatchHitTest(touchEvent);
     });
 
-    if (!aReturnResult) {
-      // We don't care how APZ handled the event so we're done here.
-      return;
-    }
-
-    if (result.GetHandledResult() != Nothing()) {
+    if (aReturnResult && result.GetHandledResult() != Nothing()) {
       // We know conclusively that the root APZ handled this or not and
       // don't need to do any more work.
       switch (result.GetStatus()) {
@@ -860,16 +864,7 @@ class NPZCSupport final
                   java::PanZoomController::OVERSCROLL_FLAG_NONE));
           break;
       }
-      return;
     }
-
-    // Wait to see if APZ handled the event or not...
-    controller->AddInputBlockCallback(
-        result.mInputBlockId,
-        [aReturnResult = java::GeckoResult::GlobalRef(aReturnResult)](
-            uint64_t aInputBlockId, const APZHandledResult& aHandledResult) {
-          aReturnResult->Complete(ConvertAPZHandledResult(aHandledResult));
-        });
   }
 };
 
@@ -1022,10 +1017,6 @@ class LayerViewSupport final
 
     if (!mCompositorPaused) {
       mUiCompositorControllerChild->Resume();
-
-      if (!mCapturePixelsResults.empty()) {
-        mUiCompositorControllerChild->RequestScreenPixels();
-      }
     }
   }
 
@@ -1033,6 +1024,20 @@ class LayerViewSupport final
   void NotifyCompositorSessionLost() {
     MOZ_ASSERT(AndroidBridge::IsJavaUiThread());
     mUiCompositorControllerChild = nullptr;
+
+    if (auto window = mWindow.Access()) {
+      while (!mCapturePixelsResults.empty()) {
+        auto result =
+            java::GeckoResult::LocalRef(mCapturePixelsResults.front().mResult);
+        if (result) {
+          result->CompleteExceptionally(
+              java::sdk::IllegalStateException::New(
+                  "Compositor session lost during screen pixels request")
+                  .Cast<jni::Throwable>());
+        }
+        mCapturePixelsResults.pop();
+      }
+    }
   }
 
   java::sdk::Surface::Param GetSurface() { return mSurface; }
@@ -1338,11 +1343,24 @@ class LayerViewSupport final
                            int32_t aSrcHeight, int32_t aOutWidth,
                            int32_t aOutHeight) {
     MOZ_ASSERT(AndroidBridge::IsJavaUiThread());
+    auto result = java::GeckoResult::LocalRef(aResult);
+
+    if (!mUiCompositorControllerChild) {
+      if (result) {
+        if (auto window = mWindow.Access()) {
+          result->CompleteExceptionally(
+              java::sdk::IllegalStateException::New(
+                  "Compositor session lost prior to screen pixels request")
+                  .Cast<jni::Throwable>());
+        }
+      }
+      return;
+    }
 
     int size = 0;
     if (auto window = mWindow.Access()) {
       mCapturePixelsResults.push(CaptureRequest(
-          java::GeckoResult::GlobalRef(java::GeckoResult::LocalRef(aResult)),
+          java::GeckoResult::GlobalRef(result),
           java::sdk::Bitmap::GlobalRef(java::sdk::Bitmap::LocalRef(aTarget)),
           ScreenRect(aXOffset, aYOffset, aSrcWidth, aSrcHeight),
           IntSize(aOutWidth, aOutHeight)));
@@ -1350,9 +1368,7 @@ class LayerViewSupport final
     }
 
     if (size == 1) {
-      if (mUiCompositorControllerChild) {
-        mUiCompositorControllerChild->RequestScreenPixels();
-      }
+      mUiCompositorControllerChild->RequestScreenPixels();
     }
   }
 
@@ -1455,7 +1471,7 @@ void GeckoViewSupport::Open(
     jni::Object::Param aQueue, jni::Object::Param aCompositor,
     jni::Object::Param aDispatcher, jni::Object::Param aSessionAccessibility,
     jni::Object::Param aInitData, jni::String::Param aId,
-    jni::String::Param aChromeURI, int32_t aScreenId, bool aPrivateMode) {
+    jni::String::Param aChromeURI, bool aPrivateMode) {
   MOZ_ASSERT(NS_IsMainThread());
 
   AUTO_PROFILER_LABEL("mozilla::widget::GeckoViewSupport::Open", OTHER);
@@ -1491,7 +1507,6 @@ void GeckoViewSupport::Open(
   nsCOMPtr<nsPIDOMWindowOuter> pdomWindow = nsPIDOMWindowOuter::From(domWindow);
   const RefPtr<nsWindow> window = nsWindow::From(pdomWindow);
   MOZ_ASSERT(window);
-  window->SetScreenId(aScreenId);
 
   // Attach a new GeckoView support object to the new window.
   GeckoSession::Window::LocalRef sessionWindow(aCls.Env(), aWindow);
@@ -1743,7 +1758,6 @@ void nsWindow::DumpWindows(const nsTArray<nsWindow*>& wins, int indent) {
 
 nsWindow::nsWindow()
     : mWidgetId(++sWidgetId),
-      mScreenId(0),  // Use 0 (primary screen) as the default value.
       mIsVisible(false),
       mParent(nullptr),
       mDynamicToolbarMaxHeight(0),
@@ -2670,12 +2684,6 @@ void nsWindow::UpdateZoomConstraints(
 CompositorBridgeChild* nsWindow::GetCompositorBridgeChild() const {
   return mCompositorSession ? mCompositorSession->GetCompositorBridgeChild()
                             : nullptr;
-}
-
-already_AddRefed<nsIScreen> nsWindow::GetWidgetScreen() {
-  RefPtr<nsIScreen> screen =
-      ScreenHelperAndroid::GetSingleton()->ScreenForId(mScreenId);
-  return screen.forget();
 }
 
 void nsWindow::SetContentDocumentDisplayed(bool aDisplayed) {

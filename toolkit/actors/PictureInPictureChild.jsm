@@ -54,6 +54,10 @@ XPCOMUtils.defineLazyModuleGetters(this, {
   AppConstants: "resource://gre/modules/AppConstants.jsm",
 });
 
+XPCOMUtils.defineLazyModuleGetters(this, {
+  NimbusFeatures: "resource://nimbus/ExperimentAPI.jsm",
+});
+
 XPCOMUtils.defineLazyPreferenceGetter(
   this,
   "DISPLAY_TEXT_TRACKS_PREF",
@@ -258,7 +262,7 @@ class PictureInPictureToggleChild extends JSWindowActorChild {
 
     let visibilityThresholdPref = Services.prefs.getFloatPref(
       TOGGLE_VISIBILITY_THRESHOLD_PREF,
-      "0.9"
+      "1.0"
     );
 
     if (!state) {
@@ -719,6 +723,19 @@ class PictureInPictureToggleChild extends JSWindowActorChild {
         "toggle",
         1
       );
+      let args = {
+        method: "toggle",
+        firstTimeToggle: (!Services.prefs.getBoolPref(
+          "media.videocontrols.picture-in-picture.video-toggle.has-used"
+        )).toString(),
+      };
+      Services.telemetry.recordEvent(
+        "pictureinpicture",
+        "opened_method",
+        "method",
+        null,
+        args
+      );
 
       let pipEvent = new this.contentWindow.CustomEvent(
         "MozTogglePictureInPicture",
@@ -899,7 +916,7 @@ class PictureInPictureToggleChild extends JSWindowActorChild {
 
       let visibilityThresholdPref = Services.prefs.getFloatPref(
         TOGGLE_VISIBILITY_THRESHOLD_PREF,
-        "0.9"
+        "1.0"
       );
 
       // Do we have any toggle overrides? If so, try to apply them.
@@ -928,6 +945,24 @@ class PictureInPictureToggleChild extends JSWindowActorChild {
       toggle.setAttribute("policy", TOGGLE_POLICY_STRINGS[state.togglePolicy]);
     } else {
       toggle.removeAttribute("policy");
+    }
+
+    const nimbusExperimentVariables = NimbusFeatures.pictureinpicture.getAllVariables(
+      { defaultValues: { title: null, message: false, showIconOnly: false } }
+    );
+    // nimbusExperimentVariables will be defaultValues when the experiment is disabled
+    if (nimbusExperimentVariables.title && nimbusExperimentVariables.message) {
+      let pipExplainer = shadowRoot.querySelector(".pip-explainer");
+      let pipLabel = shadowRoot.querySelector(".pip-label");
+
+      pipExplainer.innerText = nimbusExperimentVariables.message;
+      pipLabel.innerText = nimbusExperimentVariables.title;
+    } else if (nimbusExperimentVariables.showIconOnly) {
+      // We only want to show the PiP icon in this experiment scenario
+      let pipExpanded = shadowRoot.querySelector(".pip-expanded");
+      pipExpanded.style.display = "none";
+      let pipIcon = shadowRoot.querySelector(".pip-icon");
+      pipIcon.style.display = "block";
     }
 
     controlsOverlay.removeAttribute("hidetoggle");
@@ -966,6 +1001,23 @@ class PictureInPictureToggleChild extends JSWindowActorChild {
       !toggle.hasAttribute("hidden")
     ) {
       Services.telemetry.scalarAdd("pictureinpicture.saw_toggle", 1);
+      const hasUsedPiP = Services.prefs.getBoolPref(
+        "media.videocontrols.picture-in-picture.video-toggle.has-used"
+      );
+      let args = {
+        firstTime: (!hasUsedPiP).toString(),
+      };
+      Services.telemetry.recordEvent(
+        "pictureinpicture",
+        "saw_toggle",
+        "toggle",
+        null,
+        args
+      );
+      // only record if this is the first time seeing the toggle
+      if (!hasUsedPiP) {
+        NimbusFeatures.pictureinpicture.recordExposureEvent();
+      }
     }
 
     // Now that we're hovering the video, we'll check to see if we're
@@ -1077,14 +1129,14 @@ class PictureInPictureToggleChild extends JSWindowActorChild {
 
     let toggle = this.getToggleElement(shadowRoot);
     if (this.isMouseOverToggle(toggle, event)) {
-      event.stopImmediatePropagation();
-      event.preventDefault();
-
+      let devicePixelRatio = toggle.ownerGlobal.devicePixelRatio;
       this.sendAsyncMessage("PictureInPicture:OpenToggleContextMenu", {
-        screenX: event.screenX,
-        screenY: event.screenY,
+        screenXDevPx: event.screenX * devicePixelRatio,
+        screenYDevPx: event.screenY * devicePixelRatio,
         mozInputSource: event.mozInputSource,
       });
+      event.stopImmediatePropagation();
+      event.preventDefault();
     }
   }
 
@@ -1167,6 +1219,8 @@ class PictureInPictureChild extends JSWindowActorChild {
 
   /**
    * Sets up Picture-in-Picture to support displaying text tracks from WebVTT
+   * or if WebVTT isn't supported we will register the caption change mutation observer if
+   * the site wrapper exists.
    *
    * If the originating video supports WebVTT, try to read the
    * active track and cues. Display any active cues on the pip window
@@ -1179,6 +1233,7 @@ class PictureInPictureChild extends JSWindowActorChild {
     const isWebVTTSupported = !!originatingVideo.textTracks?.length;
 
     if (!isWebVTTSupported) {
+      this.setUpCaptionChangeListener(originatingVideo);
       return;
     }
 
@@ -1241,15 +1296,9 @@ class PictureInPictureChild extends JSWindowActorChild {
       return;
     }
 
-    const allCuesArray = [...textTrackCues];
-    let lineNumberUsed = allCuesArray.find(cue => cue.line !== "auto");
-
-    // If VTTCue.line is not set to "auto", simplying reading textTrackCues does
-    // not guarantee that text tracks are displayed in their intended order. In this case,
-    // sort the cues according to line number.
-    if (lineNumberUsed) {
-      allCuesArray.sort((cue1, cue2) => cue1.line - cue2.line);
-    }
+    let allCuesArray = [...textTrackCues];
+    // Re-order cues
+    this.getOrderedWebVTTCues(allCuesArray);
     // Parse through WebVTT cue using vtt.js to ensure
     // semantic markup like <b> and <i> tags are rendered.
     allCuesArray.forEach(cue => {
@@ -1262,6 +1311,41 @@ class PictureInPictureChild extends JSWindowActorChild {
       cueDiv.style = "white-space: pre;";
       pipWindowTracksContainer.appendChild(cueDiv);
     });
+  }
+
+  /**
+   * Re-orders list of multiple active cues to ensure cues are rendered in the correct order.
+   * How cues are ordered depends on the VTTCue.line value of the cue.
+   *
+   * If line is string "auto", we want to reverse the order of cues.
+   * Cues are read from top to bottom in a vtt file, but are inserted into a video from bottom to top.
+   * Ensure this order is followed.
+   *
+   * If line is an integer or percentage, we want to order cues according to numeric value.
+   * Assumptions:
+   *  1) all active cues are numeric
+   *  2) all active cues are in range 0..100
+   *  3) all actives cue are horizontal (no VTTCue.vertical)
+   *  4) all active cues with VTTCue.line integer have VTTCue.snapToLines = true
+   *  5) all active cues with VTTCue.line percentage have VTTCue.snapToLines = false
+   *
+   * vtt.jsm currently sets snapToLines to false if line is a percentage value, but
+   * cues are still ordered by line. In most cases, snapToLines is set to true by default,
+   * unless intentionally overridden.
+   * @param allCuesArray {Array<VTTCue>} array of active cues
+   */
+  getOrderedWebVTTCues(allCuesArray) {
+    if (!allCuesArray || allCuesArray.length <= 1) {
+      return;
+    }
+
+    let allCuesHaveNumericLines = allCuesArray.find(cue => cue.line !== "auto");
+
+    if (allCuesHaveNumericLines) {
+      allCuesArray.sort((cue1, cue2) => cue1.line - cue2.line);
+    } else if (allCuesArray.length >= 2) {
+      allCuesArray.reverse();
+    }
   }
 
   /**
@@ -1379,6 +1463,7 @@ class PictureInPictureChild extends JSWindowActorChild {
             videoWidth: video.videoWidth,
           });
         }
+        this.setupTextTracks(video);
         break;
       }
       case "change": {
@@ -1548,6 +1633,12 @@ class PictureInPictureChild extends JSWindowActorChild {
     }
   }
 
+  setUpCaptionChangeListener(originatingVideo) {
+    if (this.videoWrapper) {
+      this.videoWrapper.setCaptionContainerObserver(originatingVideo, this);
+    }
+  }
+
   /**
    * Stops tracking the originating video's document. This should
    * happen once the Picture-in-Picture window goes away (or is about
@@ -1613,7 +1704,8 @@ class PictureInPictureChild extends JSWindowActorChild {
         : null;
     this.videoWrapper = new PictureInPictureChildVideoWrapper(
       wrapperPath,
-      originatingVideo
+      originatingVideo,
+      this
     );
   }
 
@@ -1688,6 +1780,7 @@ class PictureInPictureChild extends JSWindowActorChild {
     textTracks.style.bottom = "30px";
     textTracks.style.backgroundColor = "black";
     textTracks.style.color = "white";
+    textTracks.style.whiteSpace = "pre-wrap";
 
     doc.body.appendChild(playerVideo);
     doc.body.appendChild(textTracks);
@@ -1975,6 +2068,7 @@ class PictureInPictureChild extends JSWindowActorChild {
 class PictureInPictureChildVideoWrapper {
   #sandbox;
   #siteWrapper;
+  #PictureInPictureChild;
 
   /**
    * Create a wrapper for the original <video>
@@ -1986,10 +2080,11 @@ class PictureInPictureChildVideoWrapper {
    * @param {HTMLVideoElement} video
    *        The original <video> we want to create a wrapper class for.
    */
-  constructor(videoWrapperScriptPath, video) {
+  constructor(videoWrapperScriptPath, video, piPChild) {
     this.#sandbox = videoWrapperScriptPath
       ? this.#createSandbox(videoWrapperScriptPath, video)
       : null;
+    this.#PictureInPictureChild = piPChild;
   }
 
   /**
@@ -2100,6 +2195,17 @@ class PictureInPictureChildVideoWrapper {
     }
   }
 
+  /**
+   * Function to display the captions on the PiP window
+   * @param text The captions to be shown on the PiP window
+   */
+  updatePiPTextTracks(text) {
+    let pipWindowTracksContainer = this.#PictureInPictureChild.document.getElementById(
+      "texttracks"
+    );
+    pipWindowTracksContainer.textContent = text;
+  }
+
   /* Video methods to be used for video controls from the PiP window. */
 
   play(video) {
@@ -2187,13 +2293,27 @@ class PictureInPictureChildVideoWrapper {
     });
   }
 
-  setMuted(video, isMuted) {
+  setMuted(video, shouldMute) {
     return this.#callWrapperMethod({
       name: "setMuted",
-      args: [video, isMuted],
+      args: [video, shouldMute],
       fallback: () => {
-        video.muted = isMuted;
+        video.muted = shouldMute;
       },
+      validateRetVal: retVal => retVal == null,
+    });
+  }
+
+  setCaptionContainerObserver(video) {
+    return this.#callWrapperMethod({
+      name: "setCaptionContainerObserver",
+      args: [
+        video,
+        text => {
+          this.updatePiPTextTracks(text);
+        },
+      ],
+      fallback: () => {},
       validateRetVal: retVal => retVal == null,
     });
   }

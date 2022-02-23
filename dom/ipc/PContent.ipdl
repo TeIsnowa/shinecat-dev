@@ -430,7 +430,7 @@ union BlobURLDataRequestResult
  * and a content process. There is exactly one PContentParent/PContentChild pair
  * for each content process.
  */
-[NestedUpTo=inside_cpow, NeedsOtherPid]
+[ManualDealloc, NestedUpTo=inside_cpow, NeedsOtherPid]
 sync protocol PContent
 {
     manages PBrowser;
@@ -776,6 +776,12 @@ child:
                          uint32_t aKeyModifiers);
 
     async DomainSetChanged(uint32_t aSetType, uint32_t aChangeType, nsIURI aDomain);
+
+    /**
+     * Notify the child that it will soon be asked to shutdown.
+     * This is sent with high priority right before the normal shutdown.
+     */
+    [Priority=control] async ShutdownConfirmedHP();
 
     /**
      * Notify the child to shutdown. The child will in turn call FinishShutdown
@@ -1489,7 +1495,6 @@ parent:
                        bool aForWindowDotPrint,
                        nsIURI aURIToLoad,
                        nsCString aFeatures,
-                       float aFullZoom,
                        Principal aTriggeringPrincipal,
                        nsIContentSecurityPolicy aCsp,
                        nsIReferrerInfo aReferrerInfo,
@@ -1503,7 +1508,6 @@ parent:
       bool aCalledFromJS,
       nsIURI aURIToLoad,
       nsCString aFeatures,
-      float aFullZoom,
       nsString aName,
       nsIPrincipal aTriggeringPrincipal,
       nsIContentSecurityPolicy aCsp,

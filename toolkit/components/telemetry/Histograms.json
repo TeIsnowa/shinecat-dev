@@ -10626,7 +10626,7 @@
     "record_in_processes": ["main"],
     "products": ["firefox"],
     "alert_emails": ["bvandyk@mozilla.com"],
-    "expires_in_version": "100",
+    "expires_in_version": "never",
     "releaseChannelCollection": "opt-out",
     "kind": "categorical",
     "labels": [
@@ -12095,7 +12095,7 @@
   "BROWSER_ATTRIBUTION_ERRORS": {
     "record_in_processes": ["main", "content"],
     "products": ["firefox"],
-    "expires_in_version": "100",
+    "expires_in_version": "never",
     "kind": "categorical",
     "labels": ["read_error", "decode_error", "write_error", "quarantine_error"],
     "description": "Count for the number of errors encountered trying to determine attribution data: on Windows, from the installers (stub and full); on macOS, from the quarantine database.",
@@ -14018,18 +14018,7 @@
     "keys": ["All", "Fetch"],
     "bug_numbers": [1740335],
     "alert_emails": ["sw-telemetry@mozilla.com", "rjesup@mozilla.com", "echuang@mozilla.com"],
-    "description": "The sampled number of simultaneous running ServiceWorkers in a session, sampled once each minute"
-  },
-  "SERVICE_WORKER_FETCH_RUNNING": {
-    "record_in_processes": ["main"],
-    "products": ["firefox", "fennec"],
-    "expires_in_version": "102",
-    "kind": "linear",
-    "high": 31,
-    "n_buckets": 30,
-    "bug_numbers": [1740335],
-    "alert_emails": ["sw-telemetry@mozilla.com", "rjesup@mozilla.com", "echuang@mozilla.com"],
-    "description": "The sampled number of simultaneous running ServiceWorkers handling Fetch in a session, sampled every minute"
+    "description": "The sampled number of simultaneous running ServiceWorkers in a session, sampled once each 10 seconds (lazily on state change)"
   },
   "GRAPHICS_SANITY_TEST": {
     "record_in_processes": ["main", "content"],
@@ -14521,11 +14510,12 @@
     "products": ["firefox"],
     "alert_emails": ["bryce@mozilla.com", "padenot@mozila.com", "alwu@mozilla.com"],
     "expires_in_version": "never",
+    "releaseChannelCollection": "opt-out",
     "kind": "exponential",
     "high": 10000,
     "n_buckets": 100,
-    "bug_numbers": [1238433, 1570634, 1752207],
-    "description": "Percentage of frames decoded frames dropped in an HTMLVideoElement"
+    "bug_numbers": [1238433, 1570634, 1752207, 1755363],
+    "description": "Frames of of 10,000 decoded frames dropped in an HTMLVideoElement"
   },
   "MEDIA_DECODER_BACKEND_USED": {
     "record_in_processes": ["main", "content", "gpu"],
@@ -15909,38 +15899,26 @@
  "WEBAUTHN_CREATE_CREDENTIAL_MS": {
     "record_in_processes": ["main"],
     "products": ["firefox", "fennec"],
-    "alert_emails": ["seceng-telemetry@mozilla.com", "jjones@mozilla.com"],
-    "expires_in_version": "100",
+    "alert_emails": ["seceng-telemetry@mozilla.com", "rmf@mozilla.com"],
+    "expires_in_version": "112",
     "releaseChannelCollection": "opt-out",
     "kind": "exponential",
     "high": 120000,
     "n_buckets": 100,
-    "bug_numbers": [1265472, 1558870, 1630155, 1689269],
+    "bug_numbers": [1265472, 1558870, 1630155, 1689269, 1754650],
     "description": "Time in milliseconds to complete a WebAuthn create credential."
   },
   "WEBAUTHN_GET_ASSERTION_MS": {
     "record_in_processes": ["main"],
     "products": ["firefox", "fennec"],
-    "alert_emails": ["seceng-telemetry@mozilla.com", "jjones@mozilla.com"],
-    "expires_in_version": "100",
+    "alert_emails": ["seceng-telemetry@mozilla.com", "rmf@mozilla.com"],
+    "expires_in_version": "112",
     "releaseChannelCollection": "opt-out",
     "kind": "exponential",
     "high": 120000,
     "n_buckets": 100,
-    "bug_numbers": [1265472, 1558870, 1630155, 1689269],
+    "bug_numbers": [1265472, 1558870, 1630155, 1689269, 1754650],
     "description": "Time in milliseconds to complete a WebAuthn get assertion."
-  },
-  "VIDEO_UNBLACKINGLISTING_DXVA_DRIVER_RUNTIME_STATUS": {
-    "record_in_processes": ["content"],
-    "products": ["firefox", "fennec"],
-    "alert_emails": ["bryce@mozilla.com", "padenot@mozilla.com"],
-    "expires_in_version": "100",
-    "releaseChannelCollection": "opt-out",
-    "keyed": true,
-    "kind": "enumerated",
-    "n_values":  10,
-    "bug_numbers": [1393392, 1714303],
-    "description": "The runtime status, sent when a remote HW video decoder is shutdown, of previously-blacklisted driver: 0:remote HW-decoding and GPU process didn't crash, 1:remote HW-decoding and GPU process crashed. The histogram is keyed by the blacklisted driver name."
   },
   "FORM_FILLING_REQUIRED_TIME_MS": {
     "record_in_processes": ["main"],
@@ -16416,21 +16394,6 @@
     "high": 1000,
     "n_buckets": 50,
     "description": "Time in milliseconds spent in the layout system per Refresh Driver tick."
-  },
-  "WINDOW_REMOTE_SUBFRAMES_ENABLED_STATUS": {
-    "record_in_processes": ["main"],
-    "products": ["firefox"],
-    "alert_emails": ["nika@mozilla.com"],
-    "expires_in_version": "100",
-    "kind": "categorical",
-    "labels": [
-      "EnabledByAutostart",
-      "EnabledByUser",
-      "DisabledByAutostart",
-      "DisabledByUser"
-    ],
-    "bug_numbers": [1602903, 1656132, 1690329, 1730263],
-    "description": "Fission enabled status of individual windows in fission.autostart and non-fission.autostart profiles"
   },
   "COOKIE_PURGING_ORIGINS_PURGED": {
     "expires_in_version": "never",

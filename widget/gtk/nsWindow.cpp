@@ -45,6 +45,7 @@
 #include "mozilla/Likely.h"
 #include "mozilla/MiscEvents.h"
 #include "mozilla/MouseEvents.h"
+#include "mozilla/NativeKeyBindingsType.h"
 #include "mozilla/Preferences.h"
 #include "mozilla/PresShell.h"
 #include "mozilla/ProfilerLabels.h"
@@ -2102,9 +2103,9 @@ void nsWindow::NativeMoveResizeWaylandPopup(bool aMove, bool aResize) {
       mNewBoundsAfterMoveToRect.height = mBounds.height;
     }
     return;
-  } else {
-    mNewBoundsAfterMoveToRect = LayoutDeviceIntRect(0, 0, 0, 0);
   }
+
+  mNewBoundsAfterMoveToRect = LayoutDeviceIntRect(0, 0, 0, 0);
 
   if (!WaylandPopupNeedsTrackInHierarchy()) {
     WaylandPopupSetDirectPosition();
@@ -8261,7 +8262,7 @@ bool nsWindow::GetEditCommands(NativeKeyBindingsType aType,
   Maybe<WritingMode> writingMode;
   if (aEvent.NeedsToRemapNavigationKey()) {
     if (RefPtr<TextEventDispatcher> dispatcher = GetTextEventDispatcher()) {
-      writingMode = dispatcher->MaybeWritingModeAtSelection();
+      writingMode = dispatcher->MaybeQueryWritingModeAtSelection();
     }
   }
 
@@ -8484,15 +8485,15 @@ void nsWindow::SetDrawsInTitlebar(bool aState) {
   LOG("nsWindow::SetDrawsInTitlebar() State %d mGtkWindowDecoration %d\n",
       aState, (int)mGtkWindowDecoration);
 
-  if (mIsPIPWindow && aState == mDrawInTitlebar) {
-    gtk_window_set_decorated(GTK_WINDOW(mShell), !aState);
-    LOG("  set decoration for PIP %d", aState);
-    return;
-  }
-
   if (mGtkWindowDecoration == GTK_DECORATION_NONE ||
       aState == mDrawInTitlebar) {
     LOG("  already set, quit");
+    return;
+  }
+
+  if (mIsPIPWindow) {
+    gtk_window_set_decorated(GTK_WINDOW(mShell), !aState);
+    LOG("  set decoration for PIP %d", aState);
     return;
   }
 

@@ -56,7 +56,7 @@ class nsIScreen;
 class nsIRunnable;
 
 namespace mozilla {
-class NativeEventData;
+enum class NativeKeyBindingsType : uint8_t;
 class WidgetGUIEvent;
 class WidgetInputEvent;
 class WidgetKeyboardEvent;
@@ -954,6 +954,11 @@ class nsIWidget : public nsISupports {
    */
   virtual nsresult SetNonClientMargins(LayoutDeviceIntMargin& aMargins) = 0;
 
+  /**
+   * Sets the region around the edges of the window that can be dragged to
+   * resize the window. All four sides of the window will get the same margin.
+   */
+  virtual void SetResizeMargin(mozilla::LayoutDeviceIntCoord aResizeMargin) = 0;
   /**
    * Get the client offset from the window origin.
    *
@@ -1857,13 +1862,9 @@ class nsIWidget : public nsISupports {
    * Retrieve edit commands when the key combination of aEvent is used
    * in platform native applications.
    */
-  enum NativeKeyBindingsType : uint8_t {
-    NativeKeyBindingsForSingleLineEditor,
-    NativeKeyBindingsForMultiLineEditor,
-    NativeKeyBindingsForRichTextEditor
-  };
   MOZ_CAN_RUN_SCRIPT virtual bool GetEditCommands(
-      NativeKeyBindingsType aType, const mozilla::WidgetKeyboardEvent& aEvent,
+      mozilla::NativeKeyBindingsType aType,
+      const mozilla::WidgetKeyboardEvent& aEvent,
       nsTArray<mozilla::CommandInt>& aCommands);
 
   /*

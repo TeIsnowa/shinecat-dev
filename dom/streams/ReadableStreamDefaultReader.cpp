@@ -17,8 +17,7 @@
 #include "nsISupports.h"
 #include "nsWrapperCache.h"
 
-namespace mozilla {
-namespace dom {
+namespace mozilla::dom {
 
 NS_IMPL_CYCLE_COLLECTION(ReadableStreamGenericReader, mClosedPromise, mStream,
                          mGlobal)
@@ -85,7 +84,7 @@ bool ReadableStreamReaderGenericInitialize(JSContext* aCx,
 
       return true;
     // Step 5.
-    case ReadableStream::ReaderState::Errored:
+    case ReadableStream::ReaderState::Errored: {
       // Step 5.1 Implicit
       // Step 5.2
       JS::RootedValue rootedError(aCx, aStream->StoredError());
@@ -94,6 +93,10 @@ bool ReadableStreamReaderGenericInitialize(JSContext* aCx,
       // Step 5.3
       aReader->ClosedPromise()->SetSettledPromiseIsHandled();
       return true;
+    }
+    default:
+      MOZ_ASSERT_UNREACHABLE("Unknown ReaderState");
+      return false;
   }
 }
 
@@ -420,5 +423,4 @@ void SetUpReadableStreamDefaultReader(JSContext* aCx,
   aReader->ReadRequests().clear();
 }
 
-}  // namespace dom
-}  // namespace mozilla
+}  // namespace mozilla::dom

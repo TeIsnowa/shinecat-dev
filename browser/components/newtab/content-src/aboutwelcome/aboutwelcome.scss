@@ -30,12 +30,29 @@ body {
   }
 }
 
+// Styling for content rendered in a Spotlight messaging surface.
+:root {
+  &[dialogroot] {
+    background-color: transparent;
+
+    body {
+      padding: 0;
+    }
+
+    .onboardingContainer {
+      overflow: visible;
+
+      .screen {
+        background-color: transparent;
+      }
+    }
+  }
+}
+
 .onboardingContainer {
   text-align: center;
   overflow-x: auto;
   height: 100vh;
-  background: radial-gradient(79.33% 221.6% at 7.58% 89.55%, #15141A 0%, rgba(21, 20, 26, 0) 54.36%, rgba(21, 20, 26, 0.63) 100%) center / cover no-repeat fixed;
-  background-color: #212121;
 
   @media (prefers-contrast: more) {
     background-color: var(--in-content-page-background);
@@ -77,11 +94,17 @@ body {
     display: flex;
     flex-direction: column;
     justify-content: center;
+
+    &.with-noodles {
+      height: 503px;
+      width: 504px;
+    }
   }
 
   .main-content {
     background-color: var(--in-content-page-background);
     border-radius: 20px;
+    box-shadow: 0 2px 14px 0 rgba(0, 0, 0, 0.2);
     display: flex;
     flex-direction: column;
     height: 100%;
@@ -102,6 +125,7 @@ body {
   }
 
   .screen {
+    background-color: rgba(21, 20, 26, 0.5);
     display: flex;
     position: relative;
     flex-flow: row nowrap;
@@ -129,6 +153,13 @@ body {
       padding: unset;
       margin-top: 50px;
     }
+  }
+
+  .rtamo-theme-icon {
+    max-height: 30px;
+    border-radius: 2px;
+    margin-bottom: 10px;
+    margin-top: 24px;
   }
 
   .hide-rtamo-icon {
@@ -776,7 +807,8 @@ body {
     fill: #FFA437;
   }
 
-  .screen-0 {
+  [pos='corner'] {
+    background-color: transparent;
     min-width: 700px;
 
     .section-left {
@@ -829,6 +861,7 @@ body {
 
       .main-content {
         background: transparent;
+        box-shadow: none;
         display: block;
         position: absolute;
         height: 350px;
@@ -885,12 +918,8 @@ body {
   }
 
   .screen-1 {
-    background-color: rgba(21, 20, 26, 0.5);
-
     .section-main {
       z-index: 1;
-      width: 504px;
-      height: 503px;
       margin: auto;
 
       .main-content-inner {
@@ -984,7 +1013,7 @@ body {
   }
 
   // Delays for transitioning-in of intermediate screens
-  .screen:not(.dialog-initial):not(.screen-0) {
+  .screen:not(.dialog-initial):not([pos='corner']) {
     .colorway-variations,
     .tiles-theme-section {
       transition-delay: 0.2s;
@@ -997,12 +1026,8 @@ body {
   }
 
   .screen-2 {
-    background-color: rgba(21, 20, 26, 0.5);
-
     .section-main {
       z-index: 1;
-      width: 504px;
-      height: 503px;
       margin: auto;
 
       .main-content-inner {
@@ -1100,7 +1125,7 @@ body {
       scale: var(--scale);
     }
 
-    .screen-0 {
+    [pos='corner'] {
       .brand-logo,
       .welcome-text,
       .primary,
@@ -1128,13 +1153,13 @@ body {
       }
     }
 
-    .screen:not(.dialog-initial):not(.screen-0) {
+    .screen:not(.dialog-initial):not([pos='corner']) {
       .steps {
         opacity: 0.2;
       }
     }
 
-    .screen:not(.screen-0) {
+    .screen:not([pos='corner']) {
       .welcome-text,
       .colorway-variations,
       .tiles-theme-section,
@@ -1154,7 +1179,7 @@ body {
       transition-delay: 0.2s;
     }
 
-    .screen-0 {
+    [pos='corner'] {
       .message-text {
         opacity: 0;
         translate: 0 var(--translate);
@@ -1177,7 +1202,7 @@ body {
       }
     }
 
-    .screen:not(.dialog-last):not(.screen-0) {
+    .screen:not(.dialog-last):not([pos='corner']) {
       .main-content {
         overflow: hidden;
       }

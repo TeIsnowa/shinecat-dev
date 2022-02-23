@@ -31,7 +31,7 @@ ENameValueFlag Name(nsString& aName) const override;
 /*
  * Set aValue to the value of the proxied accessible.
  */
-void Value(nsString& aValue) const;
+void Value(nsString& aValue) const override;
 
 /*
  * Set aHelp to the help string of the proxied accessible.
@@ -60,8 +60,6 @@ void Relations(nsTArray<RelationType>* aTypes,
                nsTArray<nsTArray<RemoteAccessible*>>* aTargetSets) const;
 
 bool IsSearchbox() const;
-
-nsAtom* LandmarkRole() const;
 
 nsStaticAtom* ARIARoleAtom() const;
 
@@ -139,8 +137,6 @@ LayoutDeviceIntPoint ImagePosition(uint32_t aCoordType);
 
 LayoutDeviceIntSize ImageSize();
 
-uint32_t EndOffset(bool* aOk);
-
 bool IsLinkValid();
 
 uint32_t AnchorCount(bool* aOk);
@@ -205,18 +201,6 @@ void TableUnselectRow(uint32_t aRow);
 bool TableIsProbablyForLayout();
 RemoteAccessible* AtkTableColumnHeader(int32_t aCol);
 RemoteAccessible* AtkTableRowHeader(int32_t aRow);
-
-void SelectedItems(nsTArray<RemoteAccessible*>* aSelectedItems);
-uint32_t SelectedItemCount();
-RemoteAccessible* GetSelectedItem(uint32_t aIndex);
-bool IsItemSelected(uint32_t aIndex);
-bool AddItemToSelection(uint32_t aIndex);
-bool RemoveItemFromSelection(uint32_t aIndex);
-bool SelectAll();
-bool UnselectAll();
-
-void TakeSelection();
-void SetSelected(bool aSelect);
 
 KeyBinding AccessKey();
 KeyBinding KeyboardShortcut();
