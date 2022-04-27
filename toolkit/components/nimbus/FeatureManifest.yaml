@@ -30,13 +30,29 @@ urlbar:
   description: The Address Bar
   hasExposure: true
   exposureDescription: >-
-    Exposure is sent once per browsing session after the first urlbar query is
-    made.
+    The timing of the exposure event depends on the experiment, but generally
+    the event is recorded once per app session when the user first encounters
+    the UI of the experiment in which they're enrolled.
   variables:
+    bestMatchBlockingEnabled:
+      type: boolean
+      fallbackPref: browser.urlbar.bestMatch.blockingEnabled
+      description: Whether best match Suggest suggestions can be blocked.
     bestMatchEnabled:
       type: boolean
       fallbackPref: browser.urlbar.bestMatch.enabled
       description: Gate for the best match feature. If false, the best match preferences UI and best match suggestions will not be shown. If true, the preferences UI will be shown, and the user can turn best match suggestions on or off.
+    experimentType:
+      type: string
+      description: The type of the experiment (or rollout). If "best-match", then the Nimbus exposure event will be recorded when the user first triggers a best match (or would have triggered a best match, for users in the control group). If "modal", the event will be recorded when the user first triggers to show the onbording dialog. If empty, the event will be recorded when the user first triggers any type of Suggest suggestion.
+      enum:
+        - best-match
+        - modal
+        - ""
+    isBestMatchExperiment:
+      type: boolean
+      description: >-
+        Whether the experiment (or rollout) is related to best match. If true, then the Nimbus exposure event will be recorded when the user first triggers a best match (or would have triggered a best match, for users in the control group). Deprecated, please use `experimentType: "best-match"` instead.
     merinoClientVariants:
       type: string
       fallbackPref: browser.urlbar.merino.clientVariants
@@ -51,6 +67,14 @@ urlbar:
       type: int
       fallbackPref: browser.urlbar.merino.timeoutMs
       description: Timeout for Merino fetches (ms)
+    quickSuggestAllowPositionInSuggestions:
+      type: boolean
+      fallbackPref: browser.urlbar.quicksuggest.allowPositionInSuggestions
+      description: Whether quick suggest results can be shown in position specified in the suggestions.
+    quickSuggestBlockingEnabled:
+      type: boolean
+      fallbackPref: browser.urlbar.quicksuggest.blockingEnabled
+      description: Whether the usual non-best-match Suggest suggestions can be blocked.
     quickSuggestDataCollectionEnabled:
       type: boolean
       description: Whether data collection should be enabled by default. If this variable is specified, it will override the value implied by the scenario. It will never override the user's local preference to disable (or enable) data collection, if the user has already toggled that preference.
@@ -58,6 +82,17 @@ urlbar:
       type: boolean
       fallbackPref: browser.urlbar.quicksuggest.enabled
       description: Gate for the Firefox Suggest feature as a whole. If false, the Firefox Suggest preferences UI and Suggest suggestions will not be shown. If true, the preferences UI will be shown, and the user can turn suggestions on or off.
+    quickSuggestImpressionCapsSponsoredEnabled:
+      type: boolean
+      fallbackPref: browser.urlbar.quicksuggest.impressionCaps.sponsoredEnabled
+      description: Whether sponsored suggestions are subject to impression frequency caps. If false, sponsored suggestions can be shown an unlimited number of times over any given period. If true, sponsored suggestion impressions will be subject to the caps in the remote settings configuration.
+    quickSuggestImpressionCapsNonSponsoredEnabled:
+      type: boolean
+      fallbackPref: browser.urlbar.quicksuggest.impressionCaps.nonSponsoredEnabled
+      description: Whether non-sponsored suggestions are subject to impression frequency caps. If false, non-sponsored suggestions can be shown an unlimited number of times over any given period. If true, non-sponsored suggestion impressions will be subject to the caps in the remote settings configuration.
+    quickSuggestNonSponsoredEnabled:
+      type: boolean
+      description: Whether non-sponsored suggestions should be enabled by default. If this variable is specified, it will override the value implied by the scenario. It will never override the user's local preference to disable (or enable) non-sponsored suggestions, if the user has already toggled that preference.
     quickSuggestNonSponsoredIndex:
       type: int
       fallbackPref: browser.urlbar.quicksuggest.nonSponsoredIndex
@@ -67,7 +102,7 @@ urlbar:
     quickSuggestOnboardingDialogVariation:
       type: string
       description: >-
-        Specify the messages/UI variation for QuickSuggest onboarding dialog. This should be a single letter from A to H inclusive. This value is case insensitive.
+        Specify the messages/UI variation for QuickSuggest onboarding dialog. This value is case insensitive.
     quickSuggestRemoteSettingsEnabled:
       type: boolean
       fallbackPref: browser.urlbar.quicksuggest.remoteSettings.enabled
@@ -80,10 +115,6 @@ urlbar:
         - history
         - offline
         - online
-    quickSuggestAllowPositionInSuggestions:
-      type: boolean
-      fallbackPref: browser.urlbar.quicksuggest.allowPositionInSuggestions
-      description: Whether quick suggest results can be shown in position specified in the suggestions.
     quickSuggestShouldShowOnboardingDialog:
       type: boolean
       fallbackPref: browser.urlbar.quicksuggest.shouldShowOnboardingDialog
@@ -125,6 +156,12 @@ aboutwelcome:
       description: >-
         Should the urlbar should be focused when users first land on
         about:welcome?
+    languageMismatchEnabled:
+      type: boolean
+      fallbackPref: intl.multilingual.aboutWelcome.languageMismatchEnabled
+      description: >-
+        Suggest to change the language on about:welcome when there is a mismatch with
+        the OS.
     transitions:
       type: boolean
       description: Enable transition effect between screens
@@ -152,14 +189,6 @@ abouthomecache:
       type: boolean
       fallbackPref: browser.startup.homepage.abouthome_cache.enabled
       description: Is the feature enabled?
-firefox100:
-  description: Firefox User-Agent version
-  hasExposure: false
-  isEarlyStartup: true
-  variables:
-    firefoxVersion:
-      type: int
-      description: Firefox version to spoof (or `0` to use default version)
 newtab:
   description: "The about:newtab page"
   hasExposure: true
@@ -198,7 +227,7 @@ pocketNewtab:
     hybridLayout:
       type: boolean
       fallbackPref: browser.newtabpage.activity-stream.discoverystream.hybridLayout.enabled
-      description: Enable compact cards on newtab grid only for specific breakpoints 
+      description: Enable compact cards on newtab grid only for specific breakpoints
     hideCardBackground:
       type: boolean
       fallbackPref: browser.newtabpage.activity-stream.discoverystream.hideCardBackground.enabled
@@ -345,6 +374,13 @@ shellService:
       type: boolean
       fallbackPref: browser.shell.setDefaultPDFHandler
       description: Should setting it as the default browser set it as the default PDF handler.
+    setDefaultPDFHandlerOnlyReplaceBrowsers:
+      type: boolean
+      fallbackPref: browser.shell.setDefaultPDFHandler.onlyReplaceBrowsers
+      description: >-
+        Should setting it as the default PDF handler only replace existing PDF
+        handlers that are browsers, and not other PDF handlers such as Acrobat
+        Reader or Nitro PDF.
 upgradeDialog:
   description: The dialog shown for major upgrades
   hasExposure: false
@@ -450,8 +486,9 @@ cfr:
   hasExposure: true
   exposureDescription: "Exposure is sent if the message is about to be shown after trigger and targeting conditions on the message matched."
   isEarlyStartup: false
-  schema: >-
-    "browser/components/newtab/content-src/asrouter/templates/CFR/templates/ExtensionDoorhanger.schema.json"
+  schema:
+    uri: "resource://activity-stream/schemas/CFR/ExtensionDoorhanger.schema.json"
+    path: "browser/components/newtab/content-src/asrouter/templates/CFR/templates/ExtensionDoorhanger.schema.json"
   variables: {}
 "moments-page":
   description: "Message with URL data for Messaging System"
@@ -459,8 +496,9 @@ cfr:
   exposureDescription: >-
     "Exposure is sent if the message is about to be shown after trigger and targeting conditions on the message matched."
   isEarlyStartup: false
-  schema: >-
-    "browser/components/newtab/content-src/asrouter/templates/OnboardingMessage/UpdateAction.schema.json"
+  schema:
+    uri: "resource://activity-stream/schemas/OnboardingMessage/UpdateAction.schema.json"
+    path: "browser/components/newtab/content-src/asrouter/templates/OnboardingMessage/UpdateAction.schema.json"
   variables: {}
 infobar:
   description: "Message template for Messaging System"
@@ -468,8 +506,9 @@ infobar:
   exposureDescription: >-
     "Exposure is sent if the message is about to be shown after trigger and targeting conditions on the message matched."
   isEarlyStartup: false
-  schema: >-
-    "browser/components/newtab/content-src/asrouter/templates/CFR/templates/InfoBar.schema.json"
+  schema:
+    uri: "resource://activity-stream/schemas/CFR/InfoBar.schema.json"
+    path: "browser/components/newtab/content-src/asrouter/templates/CFR/templates/InfoBar.schema.json"
   variables: {}
 spotlight:
   description: "Modal message template for Messaging System"
@@ -477,8 +516,9 @@ spotlight:
   exposureDescription: >-
     "Exposure is sent if the message is about to be shown after trigger and targeting conditions on the message matched."
   isEarlyStartup: false
-  schema: >-
-    "browser/components/newtab/content-src/asrouter/templates/OnboardingMessage/Spotlight.schema.json"
+  schema:
+    uri: "resource://activity-stream/schemas/OnboardingMessage/Spotlight.schema.json"
+    path: "browser/components/newtab/content-src/asrouter/templates/OnboardingMessage/Spotlight.schema.json"
   variables: {}
 pbNewtab:
   description: Message shown on the PB newtab for Messaging System
@@ -486,8 +526,9 @@ pbNewtab:
   exposureDescription: >-
     Exposure is sent if the message is about to be shown after trigger and targeting conditions on the message matched.
   isEarlyStartup: false
-  schema: >-
-    browser/components/newtab/content-src/asrouter/templates/PBNewtab/NewtabPromoMessage.schema.json
+  schema:
+    uri: "resource://activity-stream/schemas/PBNewtab/NewtabPromoMessage.schema.json"
+    path: "browser/components/newtab/content-src/asrouter/templates/PBNewtab/NewtabPromoMessage.schema.json"
   variables: {}
 syncAfterTabChange:
   description: "Schedule a sync after any tab change"

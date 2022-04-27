@@ -87,7 +87,7 @@ class GPUProcessManager final : public GPUProcessHost::Listener {
   ~GPUProcessManager();
 
   // If not using a GPU process, launch a new GPU process asynchronously.
-  void LaunchGPUProcess();
+  bool LaunchGPUProcess();
   bool IsGPUProcessLaunching();
 
   // Ensure that GPU-bound methods can be used. If no GPU process is being
@@ -102,7 +102,7 @@ class GPUProcessManager final : public GPUProcessHost::Listener {
       nsBaseWidget* aWidget, WebRenderLayerManager* aLayerManager,
       CSSToLayoutDeviceScale aScale, const CompositorOptions& aOptions,
       bool aUseExternalSurfaceSize, const gfx::IntSize& aSurfaceSize,
-      bool* aRetry);
+      uint64_t aInnerWindowId, bool* aRetry);
 
   bool CreateContentBridges(
       base::ProcessId aOtherProcess,
@@ -285,7 +285,7 @@ class GPUProcessManager final : public GPUProcessHost::Listener {
       nsBaseWidget* aWidget, WebRenderLayerManager* aLayerManager,
       const LayersId& aRootLayerTreeId, CSSToLayoutDeviceScale aScale,
       const CompositorOptions& aOptions, bool aUseExternalSurfaceSize,
-      const gfx::IntSize& aSurfaceSize);
+      const gfx::IntSize& aSurfaceSize, uint64_t aInnerWindowId);
 
   DISALLOW_COPY_AND_ASSIGN(GPUProcessManager);
 

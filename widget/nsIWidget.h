@@ -150,8 +150,7 @@ typedef void* nsNativeWidget;
 #endif
 #ifdef MOZ_WIDGET_ANDROID
 #  define NS_JAVA_SURFACE 100
-#  define NS_PRESENTATION_WINDOW 101
-#  define NS_PRESENTATION_SURFACE 102
+#  define NS_JAVA_SURFACE_CONTROL 101
 #endif
 
 #define MOZ_WIDGET_MAX_SIZE 16384
@@ -1670,7 +1669,8 @@ class nsIWidget : public nsISupports {
   virtual nsresult SynthesizeNativeTouchpadPan(TouchpadGesturePhase aEventPhase,
                                                LayoutDeviceIntPoint aPoint,
                                                double aDeltaX, double aDeltaY,
-                                               int32_t aModifierFlags) = 0;
+                                               int32_t aModifierFlags,
+                                               nsIObserver* aObserver) = 0;
 
   virtual void StartAsyncScrollbarDrag(
       const AsyncDragMetrics& aDragMetrics) = 0;
@@ -1707,16 +1707,12 @@ class nsIWidget : public nsISupports {
     return NS_ERROR_NOT_IMPLEMENTED;
   }
 
-  // Get rectangle of the screen where the window is placed.
-  // It's used to detect popup overflow under Wayland because
-  // Screenmanager does not work under it.
-  virtual nsRect GetPreferredPopupRect() {
-    NS_WARNING("GetPreferredPopupRect implemented only for wayland");
-    return nsRect(0, 0, 0, 0);
-  }
-  virtual void FlushPreferredPopupRect() {
-    NS_WARNING("FlushPreferredPopupRect implemented only for wayland");
-    return;
+  /**
+   * Wayland specific routines.
+   */
+  virtual LayoutDeviceIntSize GetMoveToRectPopupSize() const {
+    NS_WARNING("GetLayoutPopupRect implemented only for wayland");
+    return LayoutDeviceIntSize();
   }
 
   /**
@@ -1988,6 +1984,12 @@ class nsIWidget : public nsISupports {
    * Clear WebRender resources
    */
   virtual void ClearCachedWebrenderResources() {}
+
+  /**
+   * Request fast snapshot at RenderCompositor of WebRender.
+   * Since readback of Windows DirectComposition is very slow.
+   */
+  virtual bool SetNeedFastSnaphot() { return false; }
 
   /**
    * If this widget has its own vsync source, return it, otherwise return

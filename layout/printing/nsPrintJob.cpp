@@ -605,12 +605,6 @@ nsresult nsPrintJob::DoCommonPrint(bool aIsPrintPreview,
   printData->mPrintDC = new nsDeviceContext();
   MOZ_TRY(printData->mPrintDC->InitForPrinting(devspec));
 
-  if (XRE_IsParentProcess() && !printData->mPrintDC->IsSyncPagePrinting()) {
-    RefPtr<nsPrintJob> self(this);
-    printData->mPrintDC->RegisterPageDoneCallback(
-        [self](nsresult aResult) { self->PageDone(aResult); });
-  }
-
   MOZ_TRY(EnablePOsForPrinting());
 
   if (!mIsCreatingPrintPreview) {
@@ -632,36 +626,7 @@ nsresult nsPrintJob::Print(Document* aSourceDoc,
                              ? mPrtPreview->mPrintObject->mDocument.get()
                              : aSourceDoc;
 
-  nsresult rv = CommonPrint(false, aPrintSettings, aWebProgressListener, doc);
-
-  if (!aPrintSettings) {
-    // This is temporary until after bug 1602410 lands.
-    return rv;
-  }
-
-  // Save the print settings if the user picked them.
-  // We should probably do this immediately after the user confirms their
-  // selection (that is, move this to nsPrintingPromptService::ShowPrintDialog,
-  // just after the nsIPrintDialogService::Show call returns).
-  bool printSilently;
-  aPrintSettings->GetPrintSilent(&printSilently);
-  if (!printSilently) {  // user picked settings
-    bool saveOnCancel;
-    aPrintSettings->GetSaveOnCancel(&saveOnCancel);
-    if ((rv != NS_ERROR_ABORT || saveOnCancel) &&
-        Preferences::GetBool("print.save_print_settings", false)) {
-      nsCOMPtr<nsIPrintSettingsService> printSettingsService =
-          do_GetService("@mozilla.org/gfx/printsettings-service;1");
-      printSettingsService->SavePrintSettingsToPrefs(
-          aPrintSettings, true,
-          nsIPrintSettings::kInitSaveAll &
-              ~nsIPrintSettings::kInitSaveToFileName);
-      printSettingsService->SavePrintSettingsToPrefs(
-          aPrintSettings, false, nsIPrintSettings::kInitSavePrinterName);
-    }
-  }
-
-  return rv;
+  return CommonPrint(false, aPrintSettings, aWebProgressListener, doc);
 }
 
 nsresult nsPrintJob::PrintPreview(Document* aSourceDoc,
@@ -1115,10 +1080,9 @@ nsresult nsPrintJob::SetupToPrintContent() {
 
   nsAutoString fileNameStr;
   // check to see if we are printing to a file
-  bool isPrintToFile = false;
-  printData->mPrintSettings->GetPrintToFile(&isPrintToFile);
-  if (isPrintToFile) {
-    // On some platforms The BeginDocument needs to know the name of the file.
+  if (printData->mPrintSettings->GetOutputDestination() ==
+      nsIPrintSettings::kOutputDestinationFile) {
+    // On some platforms the BeginDocument needs to know the name of the file.
     printData->mPrintSettings->GetToFileName(fileNameStr);
   }
 
@@ -2070,10 +2034,6 @@ bool nsPrintJob::PrintSheet(nsPrintObject* aPO, bool& aInRange) {
     return true;
   }
 
-  if (XRE_IsParentProcess() && !printData->mPrintDC->IsSyncPagePrinting()) {
-    mPagePrintTimer->WaitForRemotePrint();
-  }
-
   // Print the sheet
   // if a print job was cancelled externally, an EndPage or BeginPage may
   // fail and the failure is passed back here.
@@ -2204,11 +2164,6 @@ bool nsPrintJob::DonePrintingSheets(nsPrintObject* aPO, nsresult aResult) {
            aPO, gFrameTypesStr[aPO->mFrameType], PRT_YESNO(didPrint)));
       return false;
     }
-  }
-
-  if (XRE_IsParentProcess() && printData->mPrintDC &&
-      !printData->mPrintDC->IsSyncPagePrinting()) {
-    printData->mPrintDC->UnregisterPageDoneCallback();
   }
 
   if (NS_SUCCEEDED(aResult)) {
@@ -2376,8 +2331,7 @@ nsresult nsPrintJob::StartPagePrintTimer(const UniquePtr<nsPrintObject>& aPO) {
   if (!mPagePrintTimer) {
     // Get the delay time in between the printing of each page
     // this gives the user more time to press cancel
-    int32_t printPageDelay = 50;
-    mPrt->mPrintSettings->GetPrintPageDelay(&printPageDelay);
+    int32_t printPageDelay = mPrt->mPrintSettings->GetPrintPageDelay();
 
     nsCOMPtr<nsIContentViewer> cv = do_QueryInterface(mDocViewerPrint);
     NS_ENSURE_TRUE(cv, NS_ERROR_FAILURE);

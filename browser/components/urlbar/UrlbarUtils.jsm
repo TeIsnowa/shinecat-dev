@@ -150,6 +150,7 @@ var UrlbarUtils = {
     formhistory: 14,
     dynamic: 15,
     tabtosearch: 16,
+    quicksuggest: 17,
     // n_values = 32, so you'll need to create a new histogram if you need more.
   },
 
@@ -684,7 +685,7 @@ var UrlbarUtils = {
         : UrlbarUtils.ICON.DEFAULT;
     }
     if (
-      url instanceof URL &&
+      URL.isInstance(url) &&
       UrlbarUtils.PROTOCOLS_WITH_ICONS.includes(url.protocol)
     ) {
       return "page-icon:" + url.href;
@@ -742,7 +743,7 @@ var UrlbarUtils = {
       return;
     }
 
-    if (urlOrEngine instanceof URL) {
+    if (URL.isInstance(urlOrEngine)) {
       urlOrEngine = urlOrEngine.href;
     }
 
@@ -1162,6 +1163,9 @@ var UrlbarUtils = {
         ) {
           return "visiturl";
         }
+        if (result.providerName == "UrlbarProviderQuickSuggest") {
+          return "quicksuggest";
+        }
         return result.source == UrlbarUtils.RESULT_SOURCE.BOOKMARKS
           ? "bookmark"
           : "history";
@@ -1337,6 +1341,9 @@ UrlbarUtils.RESULT_PAYLOAD_SCHEMA = {
         type: "number",
       },
       sponsoredClickUrl: {
+        type: "string",
+      },
+      sponsoredIabCategory: {
         type: "string",
       },
       sponsoredImpressionUrl: {
@@ -1844,13 +1851,14 @@ class UrlbarProvider {
    * the result, it should return false. The meaning of "blocked" depends on the
    * provider and the type of result.
    *
+   * @param {UrlbarQueryContext} queryContext
    * @param {UrlbarResult} result
-   *   The result that was picked.
+   *   The result that should be blocked.
    * @returns {boolean}
    *   Whether the result was blocked.
    * @abstract
    */
-  blockResult(result) {
+  blockResult(queryContext, result) {
     return false;
   }
 
@@ -2110,6 +2118,11 @@ class L10nCache {
    */
   constructor(l10n) {
     this.l10n = Cu.getWeakReference(l10n);
+    this.QueryInterface = ChromeUtils.generateQI([
+      "nsIObserver",
+      "nsISupportsWeakReference",
+    ]);
+    Services.obs.addObserver(this, "intl:app-locales-changed", true);
   }
 
   /**
@@ -2234,6 +2247,31 @@ class L10nCache {
    */
   clear() {
     this._messagesByKey.clear();
+  }
+
+  /**
+   * Returns the number of cached messages.
+   *
+   * @returns {number}
+   */
+  size() {
+    return this._messagesByKey.size;
+  }
+
+  /**
+   * Observer method from Services.obs.addObserver.
+   * @param {nsISupports} subject
+   * @param {string} topic
+   * @param {string} data
+   */
+  async observe(subject, topic, data) {
+    switch (topic) {
+      case "intl:app-locales-changed": {
+        await this.l10n.ready;
+        this.clear();
+        break;
+      }
+    }
   }
 
   /**

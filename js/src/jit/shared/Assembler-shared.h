@@ -24,14 +24,15 @@
 #include "wasm/WasmCodegenTypes.h"
 #include "wasm/WasmConstants.h"
 
-#if defined(JS_CODEGEN_ARM) || defined(JS_CODEGEN_ARM64) || \
-    defined(JS_CODEGEN_MIPS32) || defined(JS_CODEGEN_MIPS64)
+#if defined(JS_CODEGEN_ARM) || defined(JS_CODEGEN_ARM64) ||     \
+    defined(JS_CODEGEN_MIPS32) || defined(JS_CODEGEN_MIPS64) || \
+    defined(JS_CODEGEN_LOONG64)
 // Push return addresses callee-side.
 #  define JS_USE_LINK_REGISTER
 #endif
 
 #if defined(JS_CODEGEN_MIPS32) || defined(JS_CODEGEN_MIPS64) || \
-    defined(JS_CODEGEN_ARM64)
+    defined(JS_CODEGEN_ARM64) || defined(JS_CODEGEN_LOONG64)
 // JS_CODELABEL_LINKMODE gives labels additional metadata
 // describing how Bind() should patch them.
 #  define JS_CODELABEL_LINKMODE
@@ -41,6 +42,7 @@ namespace js {
 namespace jit {
 
 enum class FrameType;
+enum class ExceptionResumeKind : int32_t;
 
 namespace Disassembler {
 class HeapAccess;
@@ -97,6 +99,7 @@ struct Imm32 {
 
   explicit Imm32(int32_t value) : value(value) {}
   explicit Imm32(FrameType type) : Imm32(int32_t(type)) {}
+  explicit Imm32(ExceptionResumeKind kind) : Imm32(int32_t(kind)) {}
 
   static inline Imm32 ShiftOf(enum Scale s) {
     switch (s) {

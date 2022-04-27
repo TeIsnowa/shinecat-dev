@@ -2,7 +2,9 @@
  * License, v. 2.0. If a copy of the MPL was not distributed with this file,
  * You can obtain one at http://mozilla.org/MPL/2.0/. */
 
-const { AnimationFramePromise, PollPromise } = ChromeUtils.import(
+const { setTimeout } = ChromeUtils.import("resource://gre/modules/Timer.jsm");
+
+const { AnimationFramePromise, Deferred, PollPromise } = ChromeUtils.import(
   "chrome://remote/content/shared/Sync.jsm"
 );
 
@@ -26,11 +28,34 @@ add_task(async function test_AnimationFramePromiseAbortWhenWindowClosed() {
   await AnimationFramePromise(win);
 });
 
+add_task(async function test_DeferredRejected() {
+  const deferred = Deferred();
+
+  // eslint-disable-next-line mozilla/no-arbitrary-setTimeout
+  setTimeout(() => deferred.reject(new Error("foo")), 100);
+
+  try {
+    await deferred.promise;
+    ok(false);
+  } catch (e) {
+    equal(e.message, "foo");
+  }
+});
+
+add_task(async function test_DeferredResolved() {
+  const deferred = Deferred();
+
+  // eslint-disable-next-line mozilla/no-arbitrary-setTimeout
+  setTimeout(() => deferred.resolve("foo"), 100);
+
+  const result = await deferred.promise;
+  equal(result, "foo");
+});
+
 add_test(function test_executeSoon_callback() {
   // executeSoon() is already defined for xpcshell in head.js. As such import
   // our implementation into a custom namespace.
-  let sync = {};
-  ChromeUtils.import("chrome://remote/content/shared/Sync.jsm", sync);
+  let sync = ChromeUtils.import("chrome://remote/content/shared/Sync.jsm");
 
   for (let func of ["foo", null, true, [], {}]) {
     Assert.throws(() => sync.executeSoon(func), /TypeError/);

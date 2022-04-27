@@ -2,6 +2,8 @@
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at <http://mozilla.org/MPL/2.0/>. */
 
+"use strict";
+
 const TEST_COM_URI = `${URL_ROOT_COM_SSL}examples/doc_dbg-fission-pause-exceptions.html`;
 // Tests Pause on exceptions in remote iframes
 
@@ -15,8 +17,11 @@ add_task(async function() {
   await reload(dbg);
   await waitForPaused(dbg);
 
-  assertPausedLocation(dbg);
-  assertDebugLine(dbg, 17);
+  assertPausedAtSourceAndLine(
+    dbg,
+    findSource(dbg, "doc_dbg-fission-frame-pause-exceptions.html").id,
+    17
+  );
 
   await resume(dbg);
 
@@ -26,14 +31,20 @@ add_task(async function() {
   await reload(dbg);
   await waitForPaused(dbg);
 
-  assertPausedLocation(dbg);
-  assertDebugLine(dbg, 13);
+  assertPausedAtSourceAndLine(
+    dbg,
+    findSource(dbg, "doc_dbg-fission-frame-pause-exceptions.html").id,
+    13
+  );
 
   await resume(dbg);
   await waitForPaused(dbg);
 
-  assertPausedLocation(dbg);
-  assertDebugLine(dbg, 17);
+  assertPausedAtSourceAndLine(
+    dbg,
+    findSource(dbg, "doc_dbg-fission-frame-pause-exceptions.html").id,
+    17
+  );
 
   await resume(dbg);
 });

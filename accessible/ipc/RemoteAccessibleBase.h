@@ -80,13 +80,7 @@ class RemoteAccessibleBase : public Accessible, public HyperTextAccessibleBase {
 
   // Accessible hierarchy method overrides
 
-  virtual Accessible* Parent() const override {
-    if (Derived* parent = RemoteParent()) {
-      return parent;
-    }
-
-    return OuterDocOfRemoteBrowser();
-  }
+  virtual Accessible* Parent() const override { return RemoteParent(); }
 
   virtual Accessible* ChildAt(uint32_t aIndex) const override {
     return RemoteChildAt(aIndex);
@@ -108,7 +102,7 @@ class RemoteAccessibleBase : public Accessible, public HyperTextAccessibleBase {
     }
     return parent->mChildren.IndexOf(static_cast<const Derived*>(this));
   }
-  uint32_t EmbeddedChildCount() const;
+  virtual uint32_t EmbeddedChildCount() override;
   virtual int32_t IndexOfEmbeddedChild(Accessible* aChild) override;
   virtual Accessible* EmbeddedChildAt(uint32_t aChildIdx) override;
 
@@ -183,11 +177,15 @@ class RemoteAccessibleBase : public Accessible, public HyperTextAccessibleBase {
 
   virtual already_AddRefed<nsAtom> DisplayStyle() const override;
 
+  virtual Maybe<float> Opacity() const override;
+
   virtual uint8_t ActionCount() const override;
 
   virtual void ActionNameAt(uint8_t aIndex, nsAString& aName) override;
 
   virtual bool DoAction(uint8_t aIndex) const override;
+
+  virtual void SelectionRanges(nsTArray<TextRange>* aRanges) const override;
 
   //////////////////////////////////////////////////////////////////////////////
   // SelectAccessible
@@ -215,6 +213,7 @@ class RemoteAccessibleBase : public Accessible, public HyperTextAccessibleBase {
   // Methods that interact with content.
 
   virtual void TakeFocus() const override;
+  virtual void ScrollTo(uint32_t aHow) const override;
 
   /**
    * Allow the platform to store a pointers worth of data on us.
@@ -222,10 +221,7 @@ class RemoteAccessibleBase : public Accessible, public HyperTextAccessibleBase {
   uintptr_t GetWrapper() const { return mWrapper; }
   void SetWrapper(uintptr_t aWrapper) { mWrapper = aWrapper; }
 
-  /*
-   * Return the ID of the accessible being proxied.
-   */
-  uint64_t ID() const { return mID; }
+  virtual uint64_t ID() const override { return mID; }
 
   /**
    * Return the document containing this proxy, or the proxy itself if it is a
@@ -276,6 +272,8 @@ class RemoteAccessibleBase : public Accessible, public HyperTextAccessibleBase {
   virtual void AppendTextTo(nsAString& aText, uint32_t aStartOffset = 0,
                             uint32_t aLength = UINT32_MAX) override;
 
+  virtual bool TableIsProbablyForLayout();
+
   uint32_t GetCachedTextLength();
   Maybe<const nsTArray<int32_t>&> GetCachedTextLines();
   RefPtr<const AccAttributes> GetCachedTextAttributes();
@@ -285,11 +283,10 @@ class RemoteAccessibleBase : public Accessible, public HyperTextAccessibleBase {
                          : nullptr;
   }
 
-  /**
-   * Return the id of the dom node this accessible represents.  Note this
-   * should probably only be used for testing.
-   */
-  virtual void DOMNodeID(nsString& aID) const;
+  virtual TableAccessibleBase* AsTableBase() override;
+  virtual TableCellAccessibleBase* AsTableCellBase() override;
+
+  virtual void DOMNodeID(nsString& aID) const override;
 
   // HyperTextAccessibleBase
   virtual already_AddRefed<AccAttributes> DefaultTextAttributes() override;
@@ -320,6 +317,8 @@ class RemoteAccessibleBase : public Accessible, public HyperTextAccessibleBase {
  protected:
   void SetParent(Derived* aParent);
   Maybe<nsRect> RetrieveCachedBounds() const;
+  bool ApplyTransform(nsRect& aBounds) const;
+  void ApplyScrollOffset(nsRect& aBounds) const;
 
   virtual void ARIAGroupPosition(int32_t* aLevel, int32_t* aSetSize,
                                  int32_t* aPosInSet) const override;
@@ -338,6 +337,8 @@ class RemoteAccessibleBase : public Accessible, public HyperTextAccessibleBase {
 
   friend Derived;
   friend DocAccessibleParent;
+  friend class xpcAccessible;
+  friend class CachedTableCellAccessible;
 
   nsTArray<Derived*> mChildren;
   DocAccessibleParent* mDoc;

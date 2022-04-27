@@ -507,8 +507,8 @@ class APZCTreeManager : public IAPZCTreeManager, public APZInputBridge {
   // functions to the world.
  private:
   friend class APZUpdater;
-  void LockTree();
-  void UnlockTree();
+  void LockTree() CAPABILITY_ACQUIRE(mTreeLock);
+  void UnlockTree() CAPABILITY_RELEASE(mTreeLock);
 
   // Protected hooks for gtests subclass
   virtual AsyncPanZoomController* NewAPZCInstance(
@@ -537,6 +537,9 @@ class APZCTreeManager : public IAPZCTreeManager, public APZInputBridge {
   already_AddRefed<AsyncPanZoomController> GetTargetAPZC(
       const LayersId& aLayersId,
       const ScrollableLayerGuid::ViewID& aScrollId) const;
+  already_AddRefed<AsyncPanZoomController> GetTargetAPZC(
+      const LayersId& aLayersId, const ScrollableLayerGuid::ViewID& aScrollId,
+      const MutexAutoLock& aProofOfMapLock) const;
   ScreenToParentLayerMatrix4x4 GetScreenToApzcTransform(
       const AsyncPanZoomController* aApzc) const;
   ParentLayerToScreenMatrix4x4 GetApzcToGeckoTransform(
@@ -558,8 +561,6 @@ class APZCTreeManager : public IAPZCTreeManager, public APZInputBridge {
   already_AddRefed<AsyncPanZoomController> FindZoomableApzc(
       AsyncPanZoomController* aStart) const;
 
-  ScreenMargin GetGeckoFixedLayerMargins() const;
-
   ScreenMargin GetCompositorFixedLayerMargins() const;
 
   APZScrollGeneration NewAPZScrollGeneration() {
@@ -571,6 +572,12 @@ class APZCTreeManager : public IAPZCTreeManager, public APZInputBridge {
     return mScrollGenerationCounter.NewAPZGeneration();
   }
 
+  template <typename Callback>
+  void CallWithMapLock(Callback& aCallback) {
+    MutexAutoLock lock(mMapLock);
+    aCallback(lock);
+  }
+
  private:
   using GuidComparator = ScrollableLayerGuid::Comparator;
   using ScrollNode = WebRenderScrollDataWrapper;
@@ -578,7 +585,7 @@ class APZCTreeManager : public IAPZCTreeManager, public APZInputBridge {
   /* Helpers */
 
   void AttachNodeToTree(HitTestingTreeNode* aNode, HitTestingTreeNode* aParent,
-                        HitTestingTreeNode* aNextSibling);
+                        HitTestingTreeNode* aNextSibling) REQUIRES(mTreeLock);
   already_AddRefed<AsyncPanZoomController> GetTargetAPZC(
       const ScrollableLayerGuid& aGuid);
   already_AddRefed<HitTestingTreeNode> GetTargetNode(
@@ -718,7 +725,7 @@ class APZCTreeManager : public IAPZCTreeManager, public APZInputBridge {
   // the coordinates of |aNode|'s parent in the hit-testing tree.
   // Requires the caller to hold mTreeLock.
   LayerToParentLayerMatrix4x4 ComputeTransformForNode(
-      const HitTestingTreeNode* aNode) const;
+      const HitTestingTreeNode* aNode) const REQUIRES(mTreeLock);
 
   // Look up the GeckoContentController for the given layers id.
   static already_AddRefed<GeckoContentController> GetContentController(
@@ -775,7 +782,7 @@ class APZCTreeManager : public IAPZCTreeManager, public APZInputBridge {
    * management state.
    * IMPORTANT: See the note about lock ordering at the top of this file. */
   mutable mozilla::RecursiveMutex mTreeLock;
-  RefPtr<HitTestingTreeNode> mRootNode;
+  RefPtr<HitTestingTreeNode> mRootNode GUARDED_BY(mTreeLock);
 
   /*
    * A set of LayersIds for which APZCTM should only send empty
@@ -786,7 +793,8 @@ class APZCTreeManager : public IAPZCTreeManager, public APZInputBridge {
    * from its old tree manager (us).
    * Acquire mTreeLock before accessing this.
    */
-  std::unordered_set<LayersId, LayersId::HashFn> mDetachedLayersIds;
+  std::unordered_set<LayersId, LayersId::HashFn> mDetachedLayersIds
+      GUARDED_BY(mTreeLock);
 
   /* If the current hit-testing tree contains an async zoom container
    * node, this is set to the layers id of subtree that has the node.

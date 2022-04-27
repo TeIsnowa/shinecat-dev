@@ -27,7 +27,7 @@ var TabManager = {
    *     All the found <xul:browser>s. Will return an empty array if
    *     no windows and tabs can be found.
    */
-  browsers() {
+  get browsers() {
     const browsers = [];
 
     for (const win of this.windows) {
@@ -135,7 +135,7 @@ var TabManager = {
   },
 
   /**
-   * Retrieve a the browser element corresponding to the provided unique id,
+   * Retrieve the browser element corresponding to the provided unique id,
    * previously generated via getIdForBrowser.
    *
    * TODO: To avoid creating strong references on browser elements and
@@ -164,9 +164,28 @@ var TabManager = {
   },
 
   /**
+   * Retrieve the browsing context corresponding to the provided unique id.
+   *
+   * @param {String} id
+   *     A browsing context unique id (created by getIdForBrowsingContext).
+   * @return {BrowsingContext=}
+   *     The browsing context found for this id, null if none was found.
+   */
+  getBrowsingContextById(id) {
+    const browser = this.getBrowserById(id);
+    if (browser) {
+      return browser.browsingContext;
+    }
+
+    return BrowsingContext.get(id);
+  },
+
+  /**
    * Retrieve the unique id for the given xul browser element. The id is a
    * dynamically generated uuid associated with the permanentKey property of the
-   * given browser element.
+   * given browser element. This method is preferable over getIdForBrowsingContext
+   * in case of working with browser element of a tab, since we can not guarantee
+   * that browsing context is attached to it.
    *
    * @param {xul:browser} browserElement
    *     The <xul:browser> for which we want to retrieve the id.
@@ -183,19 +202,6 @@ var TabManager = {
       browserUniqueIds.set(key, uuid.substring(1, uuid.length - 1));
     }
     return browserUniqueIds.get(key);
-  },
-
-  /**
-   * Retrieve the unique id for the browser element owning the provided browsing
-   * context.
-   *
-   * @param {BrowsingContext} browsingContext
-   *     The browsing context for which we want to retrieve the (browser) uuid.
-   * @return {String} The unique id for the browser owning the browsing context.
-   */
-  getBrowserIdForBrowsingContext(browsingContext) {
-    const contentBrowser = browsingContext.top.embedderElement;
-    return this.getIdForBrowser(contentBrowser);
   },
 
   /**

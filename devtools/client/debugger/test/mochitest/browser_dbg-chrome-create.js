@@ -6,6 +6,8 @@
  * Tests that a chrome debugger can be created in a new process.
  */
 
+"use strict";
+
 // There are shutdown issues for which multiple rejections are left uncaught.
 // See bug 1018184 for resolving these issues.
 PromiseTestUtils.allowMatchingRejectionsGlobally(/File closed/);
@@ -63,9 +65,12 @@ add_task(async function() {
 function initChromeDebugger() {
   info("Initializing a chrome debugger process.");
   return new Promise(resolve => {
-    BrowserToolboxLauncher.init(onClose, _process => {
-      info("Browser toolbox process started successfully.");
-      resolve(_process);
+    BrowserToolboxLauncher.init({
+      onClose,
+      onRun: _process => {
+        info("Browser toolbox process started successfully.");
+        resolve(_process);
+      },
     });
   });
 }

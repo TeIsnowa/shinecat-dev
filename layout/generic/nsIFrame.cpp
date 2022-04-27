@@ -171,11 +171,13 @@ const nsIFrame::FrameClassBits nsIFrame::sFrameClassBits[
     0] = {
 #define Leaf eFrameClassBitsLeaf
 #define NotLeaf eFrameClassBitsNone
+#define DynamicLeaf eFrameClassBitsDynamicLeaf
 #define FRAME_ID(class_, type_, leaf_, ...) leaf_,
 #define ABSTRACT_FRAME_ID(...)
 #include "mozilla/FrameIdList.h"
 #undef Leaf
 #undef NotLeaf
+#undef DynamicLeaf
 #undef FRAME_ID
 #undef ABSTRACT_FRAME_ID
 };
@@ -405,6 +407,8 @@ bool nsIFrame::IsVisibleConsideringAncestors(uint32_t aFlags) const {
   while (frame) {
     nsView* view = frame->GetView();
     if (view && view->GetVisibility() == nsViewVisibility_kHide) return false;
+
+    if (this != frame && frame->IsContentHidden()) return false;
 
     nsIFrame* parent = frame->GetParent();
     nsDeckFrame* deck = do_QueryFrame(parent);
@@ -747,7 +751,7 @@ void nsIFrame::Init(nsIContent* aContent, nsContainerFrame* aParent,
     AddStateBits(NS_FRAME_MAY_BE_TRANSFORMED);
   }
 
-  if (disp->IsContainLayout() && disp->IsContainSize() &&
+  if (disp->IsContainLayout() && disp->GetContainSizeAxes().IsBoth() &&
       // All frames that support contain:layout also support contain:size.
       IsFrameOfType(eSupportsContainLayoutAndPaint) && !IsTableWrapperFrame()) {
     // In general, frames that have contain:layout+size can be reflow roots.
@@ -1295,8 +1299,8 @@ void nsIFrame::DidSetComputedStyle(ComputedStyle* aOldComputedStyle) {
     }
 
     if (disp->mPosition != oldDisp->mPosition) {
-      if (!disp->IsRelativelyPositionedStyle() &&
-          oldDisp->IsRelativelyPositionedStyle()) {
+      if (!disp->IsRelativelyOrStickyPositionedStyle() &&
+          oldDisp->IsRelativelyOrStickyPositionedStyle()) {
         RemoveProperty(NormalPositionProperty());
       }
 
@@ -3349,15 +3353,7 @@ void nsIFrame::BuildDisplayListForStackingContext(
     aBuilder->EnterSVGEffectsContents(this, &hoistedScrollInfoItemsStorage);
   }
 
-  bool useStickyPosition = false;
-  if (disp->mPosition == StylePositionProperty::Sticky) {
-    StickyScrollContainer* stickyScrollContainer =
-        StickyScrollContainer::GetStickyScrollContainerForFrame(this);
-    if (stickyScrollContainer &&
-        stickyScrollContainer->ScrollFrame()->IsMaybeAsynchronouslyScrolled()) {
-      useStickyPosition = true;
-    }
-  }
+  bool useStickyPosition = disp->mPosition == StylePositionProperty::Sticky;
 
   bool useFixedPosition =
       disp->mPosition == StylePositionProperty::Fixed &&
@@ -3837,11 +3833,25 @@ void nsIFrame::BuildDisplayListForStackingContext(
     // descendants).
     const ActiveScrolledRoot* stickyASR = ActiveScrolledRoot::PickAncestor(
         containerItemASR, aBuilder->CurrentActiveScrolledRoot());
-    resultList.AppendNewToTop<nsDisplayStickyPosition>(
+
+    auto* stickyItem = MakeDisplayItem<nsDisplayStickyPosition>(
         aBuilder, this, &resultList, stickyASR,
         aBuilder->CurrentActiveScrolledRoot(),
         clipState.IsClippedToDisplayPort());
-    ct.TrackContainer(resultList.GetTop());
+
+    bool shouldFlatten = true;
+
+    StickyScrollContainer* stickyScrollContainer =
+        StickyScrollContainer::GetStickyScrollContainerForFrame(this);
+    if (stickyScrollContainer &&
+        stickyScrollContainer->ScrollFrame()->IsMaybeAsynchronouslyScrolled()) {
+      shouldFlatten = false;
+    }
+
+    stickyItem->SetShouldFlatten(shouldFlatten);
+
+    resultList.AppendToTop(stickyItem);
+    ct.TrackContainer(stickyItem);
 
     // If the sticky element is inside a filter, annotate the scroll frame that
     // scrolls the filter as having out-of-flow content inside a filter (this
@@ -4119,6 +4129,10 @@ void nsIFrame::BuildDisplayListForChild(nsDisplayListBuilder* aBuilder,
   });
 
   if (ShouldSkipFrame(aBuilder, aChild)) {
+    return;
+  }
+
+  if (IsContentHidden()) {
     return;
   }
 
@@ -4643,12 +4657,6 @@ static bool IsEditingHost(const nsIFrame* aFrame) {
   return element && element->IsEditableRoot();
 }
 
-static bool IsTopmostModalDialog(const nsIFrame* aFrame) {
-  auto* element = Element::FromNodeOrNull(aFrame->GetContent());
-  return element &&
-         element->State().HasState(NS_EVENT_STATE_TOPMOST_MODAL_DIALOG);
-}
-
 static StyleUserSelect UsedUserSelect(const nsIFrame* aFrame) {
   if (aFrame->IsGeneratedContentFrame()) {
     return StyleUserSelect::None;
@@ -4673,14 +4681,10 @@ static StyleUserSelect UsedUserSelect(const nsIFrame* aFrame) {
     return style;
   }
 
-  if (aFrame->IsTextInputFrame() || IsEditingHost(aFrame) ||
-      IsTopmostModalDialog(aFrame)) {
+  if (aFrame->IsTextInputFrame() || IsEditingHost(aFrame)) {
     // We don't implement 'contain' itself, but we make 'text' behave as
     // 'contain' for contenteditable and <input> / <textarea> elements anyway so
     // this is ok.
-    //
-    // Topmost modal dialogs need to behave like `text` too, because they're
-    // supposed to be selectable even if their ancestors are inert.
     return StyleUserSelect::Text;
   }
 
@@ -4747,17 +4751,23 @@ nsresult nsIFrame::MoveCaretToEventPoint(nsPresContext* aPresContext,
     return NS_OK;
   }
 
-  if (!aMouseEvent->IsAlt()) {
+  const nsPoint pt = nsLayoutUtils::GetEventCoordinatesRelativeTo(
+      aMouseEvent, RelativeTo{this});
+
+  // When not using `alt`, and clicking on a draggable, but non-editable
+  // element, don't do anything, and let d&d handle the event.
+  //
+  // See bug 48876, bug 388659 and bug 55921 for context here.
+  //
+  // FIXME(emilio): The .Contains(pt) check looks a bit fishy. When would it be
+  // false given we're the event target? If it is needed, why not checking the
+  // actual draggable node rect instead?
+  if (!aMouseEvent->IsAlt() && GetRectRelativeToSelf().Contains(pt)) {
     for (nsIContent* content = mContent; content;
          content = content->GetFlattenedTreeParent()) {
       if (nsContentUtils::ContentIsDraggable(content) &&
           !content->IsEditable()) {
-        // coordinate stuff is the fix for bug #55921
-        if ((mRect - GetPosition())
-                .Contains(nsLayoutUtils::GetEventCoordinatesRelativeTo(
-                    aMouseEvent, RelativeTo{this}))) {
-          return NS_OK;
-        }
+        return NS_OK;
       }
     }
   }
@@ -4816,9 +4826,9 @@ nsresult nsIFrame::MoveCaretToEventPoint(nsPresContext* aPresContext,
   if (aMouseEvent->IsControl()) {
     return NS_OK;
   }
-  bool control = aMouseEvent->IsMeta();
+  const bool control = aMouseEvent->IsMeta();
 #else
-  bool control = aMouseEvent->IsControl();
+  const bool control = aMouseEvent->IsControl();
 #endif
 
   RefPtr<nsFrameSelection> fc = const_cast<nsFrameSelection*>(frameselection);
@@ -4830,8 +4840,6 @@ nsresult nsIFrame::MoveCaretToEventPoint(nsPresContext* aPresContext,
                                control);
   }
 
-  nsPoint pt = nsLayoutUtils::GetEventCoordinatesRelativeTo(aMouseEvent,
-                                                            RelativeTo{this});
   ContentOffsets offsets = GetContentOffsetsFromPoint(pt, SKIP_HIDDEN);
 
   if (!offsets.content) {
@@ -4927,9 +4935,8 @@ nsresult nsIFrame::MoveCaretToEventPoint(nsPresContext* aPresContext,
       // If clicked in a link when focused content is editable, we should
       // collapse selection in the link for compatibility with Blink.
       if (isEditor) {
-        nsCOMPtr<nsIURI> uri;
         for (Element* element : mContent->InclusiveAncestorsOfType<Element>()) {
-          if (element->IsLink(getter_AddRefs(uri))) {
+          if (element->IsLink()) {
             return nsFrameSelection::FocusMode::kCollapseToNewPoint;
           }
         }
@@ -4958,10 +4965,10 @@ nsresult nsIFrame::MoveCaretToEventPoint(nsPresContext* aPresContext,
 
   if (isPrimaryButtonDown && isEditor && !aMouseEvent->IsShift() &&
       (offsets.EndOffset() - offsets.StartOffset()) == 1) {
-    // A single node is selected and we aren't extending an existing
-    // selection, which means the user clicked directly on an object (either
-    // user-select: all or a non-text node without children).
-    // Therefore, disable selection extension during mouse moves.
+    // A single node is selected and we aren't extending an existing selection,
+    // which means the user clicked directly on an object (either
+    // `user-select: all` or a non-text node without children). Therefore,
+    // disable selection extension during mouse moves.
     // XXX This is a bit hacky; shouldn't editor be able to deal with this?
     fc->SetDragState(false);
   }
@@ -5403,17 +5410,13 @@ static FrameContentRange GetRangeForFrame(const nsIFrame* aFrame) {
 // The FrameTarget represents the closest frame to a point that can be selected
 // The frame is the frame represented, frameEdge says whether one end of the
 // frame is the result (in which case different handling is needed), and
-// afterFrame says which end is repersented if frameEdge is true
+// afterFrame says which end is represented if frameEdge is true
 struct FrameTarget {
-  FrameTarget(nsIFrame* aFrame, bool aFrameEdge, bool aAfterFrame)
-      : frame(aFrame), frameEdge(aFrameEdge), afterFrame(aAfterFrame) {}
+  explicit operator bool() const { return !!frame; }
 
-  static FrameTarget Null() { return FrameTarget(nullptr, false, false); }
-
-  bool IsNull() { return !frame; }
-  nsIFrame* frame;
-  bool frameEdge;
-  bool afterFrame;
+  nsIFrame* frame = nullptr;
+  bool frameEdge = false;
+  bool afterFrame = false;
 };
 
 // See function implementation for information
@@ -5467,7 +5470,7 @@ static FrameTarget GetSelectionClosestFrameForChild(nsIFrame* aChild,
     nsPoint pt = aPoint - aChild->GetOffsetTo(parent);
     return GetSelectionClosestFrame(aChild, pt, aFlags);
   }
-  return FrameTarget(aChild, false, false);
+  return FrameTarget{aChild, false, false};
 }
 
 // When the cursor needs to be at the beginning of a block, it shouldn't be
@@ -5498,7 +5501,7 @@ static FrameTarget DrillDownToSelectionFrame(nsIFrame* aFrame, bool aEndFrame,
     if (result) return DrillDownToSelectionFrame(result, aEndFrame, aFlags);
   }
   // If the current frame has no targetable children, target the current frame
-  return FrameTarget(aFrame, true, aEndFrame);
+  return FrameTarget{aFrame, true, aEndFrame};
 }
 
 // This method finds the closest valid FrameTarget on a given line; if there is
@@ -5552,7 +5555,7 @@ static FrameTarget GetSelectionClosestFrameForLine(
   if (!closestFromIStart && !closestFromIEnd) {
     // We should only get here if there are no selectable frames on a line
     // XXX Do we need more elaborate handling here?
-    return FrameTarget::Null();
+    return FrameTarget();
   }
   if (closestFromIStart &&
       (!closestFromIEnd ||
@@ -5571,7 +5574,9 @@ static FrameTarget GetSelectionClosestFrameForBlock(nsIFrame* aFrame,
                                                     const nsPoint& aPoint,
                                                     uint32_t aFlags) {
   nsBlockFrame* bf = do_QueryFrame(aFrame);
-  if (!bf) return FrameTarget::Null();
+  if (!bf) {
+    return FrameTarget();
+  }
 
   // This code searches for the correct line
   nsBlockFrame::LineIterator end = bf->LinesEnd();
@@ -5625,14 +5630,56 @@ static FrameTarget GetSelectionClosestFrameForBlock(nsIFrame* aFrame,
   }
 
   do {
-    FrameTarget target =
-        GetSelectionClosestFrameForLine(bf, closestLine, aPoint, aFlags);
-    if (!target.IsNull()) return target;
+    if (auto target =
+            GetSelectionClosestFrameForLine(bf, closestLine, aPoint, aFlags)) {
+      return target;
+    }
     ++closestLine;
   } while (closestLine != end);
 
   // Fall back to just targeting the last targetable place
   return DrillDownToSelectionFrame(aFrame, true, aFlags);
+}
+
+// Use frame edge for grid, flex, table, and non-editable images. Choose the
+// edge based on the point position past the frame rect. If past the middle,
+// caret should be at end, otherwise at start. This behavior matches Blink.
+//
+// TODO(emilio): Can we use this code path for other replaced elements other
+// than images? Or even all other frames? We only get there when we didn't find
+// selectable children... At least one XUL test fails if we make this apply to
+// XUL labels. Also, editable images need _not_ to use the frame edge, see
+// below.
+static bool UseFrameEdge(nsIFrame* aFrame) {
+  if (aFrame->IsFlexOrGridContainer() || aFrame->IsTableFrame()) {
+    return true;
+  }
+  const nsImageFrame* image = do_QueryFrame(aFrame);
+  if (image && !aFrame->GetContent()->IsEditable()) {
+    // Editable images are a special-case because editing relies on clicking on
+    // an editable image selecting it, for it to show resizers.
+    return true;
+  }
+  return false;
+}
+
+static FrameTarget LastResortFrameTargetForFrame(nsIFrame* aFrame,
+                                                 const nsPoint& aPoint) {
+  if (!UseFrameEdge(aFrame)) {
+    return {aFrame, false, false};
+  }
+  const auto& rect = aFrame->GetRectRelativeToSelf();
+  nscoord reference;
+  nscoord middle;
+  if (aFrame->GetWritingMode().IsVertical()) {
+    reference = aPoint.y;
+    middle = rect.Height() / 2;
+  } else {
+    reference = aPoint.x;
+    middle = rect.Width() / 2;
+  }
+  const bool afterFrame = reference > middle;
+  return {aFrame, true, afterFrame};
 }
 
 // GetSelectionClosestFrame is the helper function that calculates the closest
@@ -5641,15 +5688,14 @@ static FrameTarget GetSelectionClosestFrameForBlock(nsIFrame* aFrame,
 // restricted environments.
 // Cannot handle overlapping frames correctly, so it should receive the output
 // of GetFrameForPoint
-// Guaranteed to return a valid FrameTarget
+// Guaranteed to return a valid FrameTarget.
+// aPoint is relative to aFrame.
 static FrameTarget GetSelectionClosestFrame(nsIFrame* aFrame,
                                             const nsPoint& aPoint,
                                             uint32_t aFlags) {
-  {
-    // Handle blocks; if the frame isn't a block, the method fails
-    FrameTarget target =
-        GetSelectionClosestFrameForBlock(aFrame, aPoint, aFlags);
-    if (!target.IsNull()) return target;
+  // Handle blocks; if the frame isn't a block, the method fails
+  if (auto target = GetSelectionClosestFrameForBlock(aFrame, aPoint, aFlags)) {
+    return target;
   }
 
   if (nsIFrame* kid = aFrame->PrincipalChildList().FirstChild()) {
@@ -5662,19 +5708,12 @@ static FrameTarget GetSelectionClosestFrame(nsIFrame* aFrame,
     }
     if (closest.mFrame) {
       if (SVGUtils::IsInSVGTextSubtree(closest.mFrame))
-        return FrameTarget(closest.mFrame, false, false);
+        return FrameTarget{closest.mFrame, false, false};
       return GetSelectionClosestFrameForChild(closest.mFrame, aPoint, aFlags);
     }
   }
 
-  // Use frame edge for grid, flex, table, and non-draggable & non-editable
-  // image frames.
-  const bool useFrameEdge =
-      aFrame->IsFlexOrGridContainer() || aFrame->IsTableFrame() ||
-      (static_cast<nsImageFrame*>(do_QueryFrame(aFrame)) &&
-       !nsContentUtils::ContentIsDraggable(aFrame->GetContent()) &&
-       !aFrame->GetContent()->IsEditable());
-  return FrameTarget(aFrame, useFrameEdge, false);
+  return LastResortFrameTargetForFrame(aFrame, aPoint);
 }
 
 static nsIFrame::ContentOffsets OffsetsForSingleFrame(nsIFrame* aFrame,
@@ -5748,19 +5787,21 @@ nsIFrame::ContentOffsets nsIFrame::GetContentOffsetsFromPoint(
 
     adjustedFrame = AdjustFrameForSelectionStyles(this);
 
-    // user-select: all needs special handling, because clicking on it
-    // should lead to the whole frame being selected
+    // `user-select: all` needs special handling, because clicking on it should
+    // lead to the whole frame being selected.
     if (adjustedFrame->Style()->UserSelect() == StyleUserSelect::All) {
-      nsPoint adjustedPoint = aPoint + this->GetOffsetTo(adjustedFrame);
+      nsPoint adjustedPoint = aPoint + GetOffsetTo(adjustedFrame);
       return OffsetsForSingleFrame(adjustedFrame, adjustedPoint);
     }
 
     // For other cases, try to find a closest frame starting from the parent of
     // the unselectable frame
-    if (adjustedFrame != this) adjustedFrame = adjustedFrame->GetParent();
+    if (adjustedFrame != this) {
+      adjustedFrame = adjustedFrame->GetParent();
+    }
   }
 
-  nsPoint adjustedPoint = aPoint + this->GetOffsetTo(adjustedFrame);
+  nsPoint adjustedPoint = aPoint + GetOffsetTo(adjustedFrame);
 
   FrameTarget closest =
       GetSelectionClosestFrame(adjustedFrame, adjustedPoint, aFlags);
@@ -6917,6 +6958,28 @@ bool nsIFrame::IsContentDisabled() const {
   return element && element->IsDisabled();
 }
 
+bool nsIFrame::IsContentHidden() const {
+  if (!StyleDisplay()->IsContentVisibilityHidden()) {
+    return false;
+  }
+
+  return IsFrameOfType(nsIFrame::eReplaced) || !StyleDisplay()->IsInlineFlow();
+}
+
+bool nsIFrame::AncestorHidesContent() const {
+  if (!StaticPrefs::layout_css_content_visibility_enabled()) {
+    return false;
+  }
+
+  for (nsIFrame* cur = GetInFlowParent(); cur; cur = cur->GetInFlowParent()) {
+    if (cur->IsContentHidden()) {
+      return true;
+    }
+  }
+
+  return false;
+}
+
 nsresult nsIFrame::CharacterDataChanged(const CharacterDataChangeInfo&) {
   MOZ_ASSERT_UNREACHABLE("should only be called for text frames");
   return NS_OK;
@@ -7628,7 +7691,7 @@ void nsIFrame::MovePositionBy(const nsPoint& aTranslation) {
   nsPoint position = GetNormalPosition() + aTranslation;
 
   const nsMargin* computedOffsets = nullptr;
-  if (IsRelativelyPositioned()) {
+  if (IsRelativelyOrStickyPositioned()) {
     computedOffsets = GetProperty(nsIFrame::ComputedOffsetProperty());
   }
   ReflowInput::ApplyRelativePositioning(
@@ -7676,7 +7739,7 @@ nsRect nsIFrame::GetOverflowRect(OverflowType aType) const {
     return InkOverflowFromDeltas();
   }
 
-  return nsRect(nsPoint(0, 0), GetSize());
+  return GetRectRelativeToSelf();
 }
 
 OverflowAreas nsIFrame::GetOverflowAreas() const {
@@ -7692,43 +7755,54 @@ OverflowAreas nsIFrame::GetOverflowAreas() const {
 
 OverflowAreas nsIFrame::GetOverflowAreasRelativeToSelf() const {
   if (IsTransformed()) {
-    OverflowAreas* preTransformOverflows =
-        GetProperty(PreTransformOverflowAreasProperty());
-    if (preTransformOverflows) {
-      return OverflowAreas(preTransformOverflows->InkOverflow(),
-                           preTransformOverflows->ScrollableOverflow());
+    if (OverflowAreas* preTransformOverflows =
+            GetProperty(PreTransformOverflowAreasProperty())) {
+      return *preTransformOverflows;
     }
   }
-  return OverflowAreas(InkOverflowRect(), ScrollableOverflowRect());
+  return GetOverflowAreas();
 }
 
 OverflowAreas nsIFrame::GetOverflowAreasRelativeToParent() const {
-  return GetOverflowAreas() + mRect.TopLeft();
+  return GetOverflowAreas() + GetPosition();
+}
+
+OverflowAreas nsIFrame::GetActualAndNormalOverflowAreasRelativeToParent()
+    const {
+  if (MOZ_LIKELY(!IsRelativelyOrStickyPositioned())) {
+    return GetOverflowAreasRelativeToParent();
+  }
+
+  const OverflowAreas overflows = GetOverflowAreas();
+  OverflowAreas actualAndNormalOverflows = overflows + GetPosition();
+  actualAndNormalOverflows.UnionWith(overflows + GetNormalPosition());
+  return actualAndNormalOverflows;
 }
 
 nsRect nsIFrame::ScrollableOverflowRectRelativeToParent() const {
-  return ScrollableOverflowRect() + mRect.TopLeft();
+  return ScrollableOverflowRect() + GetPosition();
 }
 
 nsRect nsIFrame::InkOverflowRectRelativeToParent() const {
-  return InkOverflowRect() + mRect.TopLeft();
+  return InkOverflowRect() + GetPosition();
 }
 
 nsRect nsIFrame::ScrollableOverflowRectRelativeToSelf() const {
   if (IsTransformed()) {
-    OverflowAreas* preTransformOverflows =
-        GetProperty(PreTransformOverflowAreasProperty());
-    if (preTransformOverflows)
+    if (OverflowAreas* preTransformOverflows =
+            GetProperty(PreTransformOverflowAreasProperty())) {
       return preTransformOverflows->ScrollableOverflow();
+    }
   }
   return ScrollableOverflowRect();
 }
 
 nsRect nsIFrame::InkOverflowRectRelativeToSelf() const {
   if (IsTransformed()) {
-    OverflowAreas* preTransformOverflows =
-        GetProperty(PreTransformOverflowAreasProperty());
-    if (preTransformOverflows) return preTransformOverflows->InkOverflow();
+    if (OverflowAreas* preTransformOverflows =
+            GetProperty(PreTransformOverflowAreasProperty())) {
+      return preTransformOverflows->InkOverflow();
+    }
   }
   return InkOverflowRect();
 }
@@ -9688,8 +9762,12 @@ static void ComputeAndIncludeOutlineArea(nsIFrame* aFrame,
   }
 
   // Keep this code in sync with nsDisplayOutline::GetInnerRect.
-  SetOrUpdateRectValuedProperty(aFrame, nsIFrame::OutlineInnerRectProperty(),
-                                innerRect);
+  if (innerRect == aFrame->GetRectRelativeToSelf()) {
+    aFrame->RemoveProperty(nsIFrame::OutlineInnerRectProperty());
+  } else {
+    SetOrUpdateRectValuedProperty(aFrame, nsIFrame::OutlineInnerRectProperty(),
+                                  innerRect);
+  }
   const nscoord offset = outline->mOutlineOffset.ToAppUnits();
   nsRect outerRect(innerRect);
   bool useOutlineAuto = false;
@@ -11424,7 +11502,7 @@ nsRect nsIFrame::GetCompositorHitTestArea(nsDisplayListBuilder* aBuilder) {
     // See https://bugzilla.mozilla.org/show_bug.cgi?id=1127773#c15.
     area = ScrollableOverflowRect();
   } else {
-    area = nsRect(nsPoint(0, 0), GetSize());
+    area = GetRectRelativeToSelf();
   }
 
   if (!area.IsEmpty()) {

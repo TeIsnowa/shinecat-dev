@@ -401,7 +401,6 @@ class CycleCollectedJSRuntime {
   // storage), because we do not want to keep it alive.  nsWrapperCache handles
   // this for us via its "object moved" handling.
   void NurseryWrapperAdded(nsWrapperCache* aCache);
-  void NurseryWrapperPreserved(JSObject* aWrapper);
   void JSObjectsTenured();
 
   void DeferredFinalize(DeferredFinalizeAppendFunction aAppendFunc,
@@ -415,7 +414,7 @@ class CycleCollectedJSRuntime {
     mZonesWaitingForGC.Insert(aZone);
   }
 
-  static void OnZoneDestroyed(JSFreeOp* aFop, JS::Zone* aZone);
+  static void OnZoneDestroyed(JS::GCContext* aGcx, JS::Zone* aZone);
 
   // Prepare any zones for GC that have been passed to AddZoneWaitingForGC()
   // since the last GC or since the last call to PrepareWaitingZonesForGC(),
@@ -465,9 +464,6 @@ class CycleCollectedJSRuntime {
   static const size_t kSegmentSize = 512;
   SegmentedVector<nsWrapperCache*, kSegmentSize, InfallibleAllocPolicy>
       mNurseryObjects;
-  SegmentedVector<JS::PersistentRooted<JSObject*>, kSegmentSize,
-                  InfallibleAllocPolicy>
-      mPreservedNurseryObjects;
 
   nsTHashSet<JS::Zone*> mZonesWaitingForGC;
 

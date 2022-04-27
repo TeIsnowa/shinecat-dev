@@ -219,7 +219,7 @@ MBasicBlock* MBasicBlock::NewSplitEdge(MIRGraph& graph, MBasicBlock* pred,
 
     // Create a resume point using our initial stack position.
     MResumePoint* splitEntry = new (graph.alloc())
-        MResumePoint(split, succEntry->pc(), MResumePoint::ResumeAt);
+        MResumePoint(split, succEntry->pc(), ResumeMode::ResumeAt);
     if (!splitEntry->init(graph.alloc())) {
       return nullptr;
     }
@@ -462,7 +462,7 @@ bool MBasicBlock::inherit(TempAllocator& alloc, size_t stackDepth,
 
   // Create a resume point using our initial stack state.
   entryResumePoint_ =
-      new (alloc) MResumePoint(this, pc(), MResumePoint::ResumeAt);
+      new (alloc) MResumePoint(this, pc(), ResumeMode::ResumeAt);
   if (!entryResumePoint_->init(alloc)) {
     return false;
   }
@@ -512,7 +512,7 @@ bool MBasicBlock::initEntrySlots(TempAllocator& alloc) {
 
   // Create a resume point using our initial stack state.
   entryResumePoint_ =
-      MResumePoint::New(alloc, this, pc(), MResumePoint::ResumeAt);
+      MResumePoint::New(alloc, this, pc(), ResumeMode::ResumeAt);
   if (!entryResumePoint_) {
     return false;
   }
@@ -616,6 +616,7 @@ void MBasicBlock::discardResumePoint(
   if (refType & RefType_DiscardOperands) {
     rp->releaseUses();
   }
+  rp->setDiscarded();
 #ifdef DEBUG
   MResumePointIterator iter = resumePointsBegin();
   while (*iter != rp) {
@@ -668,14 +669,6 @@ void MBasicBlock::discardIgnoreOperands(MInstruction* ins) {
 
   prepareForDiscard(ins, RefType_IgnoreOperands);
   instructions_.remove(ins);
-}
-
-void MBasicBlock::discardDef(MDefinition* at) {
-  if (at->isPhi()) {
-    at->block()->discardPhi(at->toPhi());
-  } else {
-    at->block()->discard(at->toInstruction());
-  }
 }
 
 void MBasicBlock::discardAllInstructions() {

@@ -25,9 +25,9 @@ namespace dom {
 // it appears only to be used internally in the Fetch API.  It might be a good
 // idea to split AbortSignal into an implementation that can follow, and an
 // implementation that can't, to provide this complexity only when it's needed.
-class AbortSignal final : public DOMEventTargetHelper,
-                          public AbortSignalImpl,
-                          public AbortFollower {
+class AbortSignal : public DOMEventTargetHelper,
+                    public AbortSignalImpl,
+                    public AbortFollower {
  public:
   NS_DECL_ISUPPORTS_INHERITED
   NS_DECL_CYCLE_COLLECTION_SCRIPT_HOLDER_CLASS_INHERITED(AbortSignal,
@@ -45,6 +45,10 @@ class AbortSignal final : public DOMEventTargetHelper,
                                              JS::Handle<JS::Value> aReason,
                                              ErrorResult& aRv);
 
+  static already_AddRefed<AbortSignal> Timeout(GlobalObject& aGlobal,
+                                               uint64_t aMilliseconds,
+                                               ErrorResult& aRv);
+
   void ThrowIfAborted(JSContext* aCx, ErrorResult& aRv);
 
   // AbortSignalImpl
@@ -53,7 +57,9 @@ class AbortSignal final : public DOMEventTargetHelper,
   // AbortFollower
   void RunAbortAlgorithm() override;
 
- private:
+  virtual bool IsTaskSignal() const { return false; }
+
+ protected:
   ~AbortSignal();
 };
 

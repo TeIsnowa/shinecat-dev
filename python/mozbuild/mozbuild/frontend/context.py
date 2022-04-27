@@ -670,6 +670,17 @@ class CompileFlags(TargetCompileFlags):
                 ["-fno-strict-aliasing"],
                 ("CXXFLAGS", "CFLAGS"),
             ),
+            (
+                # Disable floating-point contraction by default.
+                "FP_CONTRACT",
+                (
+                    ["-Xclang"]
+                    if context.config.substs.get("CC_TYPE") == "clang-cl"
+                    else []
+                )
+                + ["-ffp-contract=off"],
+                ("CXXFLAGS", "CFLAGS"),
+            ),
         )
 
         TargetCompileFlags.__init__(self, context)
@@ -1463,7 +1474,7 @@ VARIABLES = {
         """,
     ),
     "UNIFIED_SOURCES": (
-        ContextDerivedTypedList(SourcePath, StrictOrderingOnAppendList),
+        ContextDerivedTypedList(Path, StrictOrderingOnAppendList),
         list,
         """Source code files that can be compiled together.
 

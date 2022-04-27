@@ -241,18 +241,6 @@ mozilla::ipc::IPCResult DocAccessibleChild::RecvGroupPosition(
   return IPC_OK();
 }
 
-mozilla::ipc::IPCResult DocAccessibleChild::RecvScrollTo(
-    const uint64_t& aID, const uint32_t& aScrollType) {
-  LocalAccessible* acc = IdToAccessible(aID);
-  if (acc) {
-    RefPtr<PresShell> presShell = acc->Document()->PresShellPtr();
-    nsCOMPtr<nsIContent> content = acc->GetContent();
-    nsCoreUtils::ScrollTo(presShell, content, aScrollType);
-  }
-
-  return IPC_OK();
-}
-
 mozilla::ipc::IPCResult DocAccessibleChild::RecvScrollToPoint(
     const uint64_t& aID, const uint32_t& aScrollType, const int32_t& aX,
     const int32_t& aY) {
@@ -844,12 +832,11 @@ mozilla::ipc::IPCResult DocAccessibleChild::RecvColHeaderCells(
     const uint64_t& aID, nsTArray<uint64_t>* aCells) {
   TableCellAccessible* acc = IdToTableCellAccessible(aID);
   if (acc) {
-    AutoTArray<LocalAccessible*, 10> headerCells;
+    AutoTArray<Accessible*, 10> headerCells;
     acc->ColHeaderCells(&headerCells);
     aCells->SetCapacity(headerCells.Length());
-    for (uint32_t i = 0; i < headerCells.Length(); ++i) {
-      aCells->AppendElement(
-          reinterpret_cast<uint64_t>(headerCells[i]->UniqueID()));
+    for (Accessible* header : headerCells) {
+      aCells->AppendElement(header->ID());
     }
   }
 
@@ -860,12 +847,11 @@ mozilla::ipc::IPCResult DocAccessibleChild::RecvRowHeaderCells(
     const uint64_t& aID, nsTArray<uint64_t>* aCells) {
   TableCellAccessible* acc = IdToTableCellAccessible(aID);
   if (acc) {
-    AutoTArray<LocalAccessible*, 10> headerCells;
+    AutoTArray<Accessible*, 10> headerCells;
     acc->RowHeaderCells(&headerCells);
     aCells->SetCapacity(headerCells.Length());
-    for (uint32_t i = 0; i < headerCells.Length(); ++i) {
-      aCells->AppendElement(
-          reinterpret_cast<uint64_t>(headerCells[i]->UniqueID()));
+    for (Accessible* header : headerCells) {
+      aCells->AppendElement(header->ID());
     }
   }
 
@@ -1106,11 +1092,11 @@ mozilla::ipc::IPCResult DocAccessibleChild::RecvTableSelectedCells(
     const uint64_t& aID, nsTArray<uint64_t>* aCellIDs) {
   TableAccessible* acc = IdToTableAccessible(aID);
   if (acc) {
-    AutoTArray<LocalAccessible*, 30> cells;
+    AutoTArray<Accessible*, 30> cells;
     acc->SelectedCells(&cells);
     aCellIDs->SetCapacity(cells.Length());
-    for (uint32_t i = 0; i < cells.Length(); ++i) {
-      aCellIDs->AppendElement(reinterpret_cast<uint64_t>(cells[i]->UniqueID()));
+    for (Accessible* cell : cells) {
+      aCellIDs->AppendElement(cell->ID());
     }
   }
 
@@ -1206,9 +1192,9 @@ mozilla::ipc::IPCResult DocAccessibleChild::RecvAtkTableColumnHeader(
 #ifdef MOZ_ACCESSIBILITY_ATK
   TableAccessible* acc = IdToTableAccessible(aID);
   if (acc) {
-    LocalAccessible* header = AccessibleWrap::GetColumnHeader(acc, aCol);
+    Accessible* header = AccessibleWrap::GetColumnHeader(acc, aCol);
     if (header) {
-      *aHeader = reinterpret_cast<uint64_t>(header->UniqueID());
+      *aHeader = header->ID();
       *aOk = true;
     }
   }
@@ -1225,9 +1211,9 @@ mozilla::ipc::IPCResult DocAccessibleChild::RecvAtkTableRowHeader(
 #ifdef MOZ_ACCESSIBILITY_ATK
   TableAccessible* acc = IdToTableAccessible(aID);
   if (acc) {
-    LocalAccessible* header = AccessibleWrap::GetRowHeader(acc, aRow);
+    Accessible* header = AccessibleWrap::GetRowHeader(acc, aRow);
     if (header) {
-      *aHeader = reinterpret_cast<uint64_t>(header->UniqueID());
+      *aHeader = header->ID();
       *aOk = true;
     }
   }

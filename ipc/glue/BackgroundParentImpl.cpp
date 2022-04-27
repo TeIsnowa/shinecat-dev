@@ -14,9 +14,11 @@
 #include "mozilla/Assertions.h"
 #include "mozilla/Preferences.h"
 #include "mozilla/RDDProcessManager.h"
+#include "mozilla/ipc/UtilityProcessManager.h"
 #include "mozilla/RefPtr.h"
 #include "mozilla/RemoteLazyInputStreamParent.h"
 #include "mozilla/StaticPrefs_dom.h"
+#include "mozilla/dom/BackgroundSessionStorageServiceParent.h"
 #include "mozilla/dom/ClientManagerActors.h"
 #include "mozilla/dom/ContentParent.h"
 #include "mozilla/dom/DOMTypes.h"
@@ -489,6 +491,14 @@ BackgroundParentImpl::AllocPBackgroundSessionStorageManagerParent(
   return dom::AllocPBackgroundSessionStorageManagerParent(aTopContextId);
 }
 
+already_AddRefed<mozilla::dom::PBackgroundSessionStorageServiceParent>
+BackgroundParentImpl::AllocPBackgroundSessionStorageServiceParent() {
+  AssertIsInMainOrSocketProcess();
+  AssertIsOnBackgroundThread();
+
+  return MakeAndAddRef<mozilla::dom::BackgroundSessionStorageServiceParent>();
+}
+
 already_AddRefed<PIdleSchedulerParent>
 BackgroundParentImpl::AllocPIdleSchedulerParent() {
   AssertIsOnBackgroundThread();
@@ -725,6 +735,16 @@ camera::PCamerasParent* BackgroundParentImpl::AllocPCamerasParent() {
   return nullptr;
 #endif
 }
+
+#ifdef MOZ_WEBRTC
+mozilla::ipc::IPCResult BackgroundParentImpl::RecvPCamerasConstructor(
+    camera::PCamerasParent* aActor) {
+  AssertIsInMainOrSocketProcess();
+  AssertIsOnBackgroundThread();
+  MOZ_ASSERT(aActor);
+  return static_cast<camera::CamerasParent*>(aActor)->RecvPCamerasConstructor();
+}
+#endif
 
 bool BackgroundParentImpl::DeallocPCamerasParent(
     camera::PCamerasParent* aActor) {
@@ -1051,8 +1071,9 @@ mozilla::ipc::IPCResult BackgroundParentImpl::RecvMessagePortForceClose(
   AssertIsOnBackgroundThread();
 
   if (!MessagePortParent::ForceClose(aUUID, aDestinationUUID, aSequenceID)) {
-    return IPC_FAIL_NO_REASON(this);
+    return IPC_FAIL(this, "MessagePortParent::ForceClose failed.");
   }
+
   return IPC_OK();
 }
 
@@ -1392,6 +1413,42 @@ BackgroundParentImpl::RecvEnsureRDDProcessAndCreateBridge(
                  resolver(Type(NS_OK, std::move(aValue.ResolveValue())));
                });
   }
+  return IPC_OK();
+}
+
+mozilla::ipc::IPCResult
+BackgroundParentImpl::RecvEnsureUtilityProcessAndCreateBridge(
+    EnsureUtilityProcessAndCreateBridgeResolver&& aResolver) {
+  base::ProcessId otherPid = OtherPid();
+  nsCOMPtr<nsISerialEventTarget> managerThread = GetCurrentSerialEventTarget();
+  if (!managerThread) {
+    return IPC_FAIL_NO_REASON(this);
+  }
+  NS_DispatchToMainThread(NS_NewRunnableFunction(
+      "BackgroundParentImpl::RecvEnsureUtilityProcessAndCreateBridge()",
+      [aResolver, managerThread, otherPid]() {
+        RefPtr<UtilityProcessManager> upm =
+            UtilityProcessManager::GetSingleton();
+        using Type = Tuple<const nsresult&,
+                           Endpoint<mozilla::PRemoteDecoderManagerChild>&&>;
+        if (!upm) {
+          aResolver(Type(NS_ERROR_NOT_AVAILABLE,
+                         Endpoint<PRemoteDecoderManagerChild>()));
+        } else {
+          upm->StartAudioDecoding(otherPid)->Then(
+              managerThread, __func__,
+              [resolver = std::move(aResolver)](
+                  mozilla::ipc::UtilityProcessManager::AudioDecodingPromise::
+                      ResolveOrRejectValue&& aValue) mutable {
+                if (aValue.IsReject()) {
+                  resolver(Type(aValue.RejectValue(),
+                                Endpoint<PRemoteDecoderManagerChild>()));
+                  return;
+                }
+                resolver(Type(NS_OK, std::move(aValue.ResolveValue())));
+              });
+        }
+      }));
   return IPC_OK();
 }
 

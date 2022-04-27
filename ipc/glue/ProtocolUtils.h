@@ -234,8 +234,7 @@ class IProtocol : public HasResultCodes {
   virtual void RemoveManagee(int32_t, IProtocol*) = 0;
   virtual void DeallocManagee(int32_t, IProtocol*) = 0;
 
-  Maybe<IProtocol*> ReadActor(const IPC::Message* aMessage,
-                              PickleIterator* aIter, bool aNullable,
+  Maybe<IProtocol*> ReadActor(IPC::MessageReader* aReader, bool aNullable,
                               const char* aActorDescription,
                               int32_t aProtocolTypeId);
 
@@ -418,7 +417,7 @@ class IToplevelProtocol : public IProtocol {
 
   bool Open(ScopedPort aPort, base::ProcessId aOtherPid);
 
-  bool Open(MessageChannel* aChannel, nsISerialEventTarget* aEventTarget,
+  bool Open(IToplevelProtocol* aTarget, nsISerialEventTarget* aEventTarget,
             mozilla::ipc::Side aSide = mozilla::ipc::UnknownSide);
 
   // Open a toplevel actor such that both ends of the actor's channel are on
@@ -427,7 +426,7 @@ class IToplevelProtocol : public IProtocol {
   //
   // WARNING: Attempting to send a sync or intr message on the same thread
   // will crash.
-  bool OpenOnSameThread(MessageChannel* aChannel,
+  bool OpenOnSameThread(IToplevelProtocol* aTarget,
                         mozilla::ipc::Side aSide = mozilla::ipc::UnknownSide);
 
   /**
@@ -558,6 +557,10 @@ MOZ_NEVER_INLINE void LogMessageForProtocol(const char* aTopLevelProtocol,
                                             MessageDirection aDirection);
 
 MOZ_NEVER_INLINE void ProtocolErrorBreakpoint(const char* aMsg);
+
+// IPC::MessageReader and IPC::MessageWriter call this function for FatalError
+// calls which come from serialization/deserialization.
+MOZ_NEVER_INLINE void PickleFatalError(const char* aMsg, IProtocol* aActor);
 
 // The code generator calls this function for errors which come from the
 // methods of protocols.  Doing this saves codesize by making the error

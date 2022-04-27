@@ -103,7 +103,7 @@ class LSSnapshot final : public nsIRunnable {
 
   uint32_t mInitLength;
   uint32_t mLength;
-  int64_t mExactUsage;
+  int64_t mUsage;
   int64_t mPeakUsage;
 
   LoadState mLoadState;
@@ -156,7 +156,9 @@ class LSSnapshot final : public nsIRunnable {
 
   void MarkDirty();
 
-  nsresult End();
+  nsresult ExplicitCheckpoint();
+
+  nsresult ExplicitEnd();
 
   int64_t GetUsage() const;
 
@@ -175,7 +177,7 @@ class LSSnapshot final : public nsIRunnable {
 
   nsresult UpdateUsage(int64_t aDelta);
 
-  nsresult Checkpoint();
+  nsresult Checkpoint(bool aSync = false);
 
   nsresult Finish(bool aSync = false);
 

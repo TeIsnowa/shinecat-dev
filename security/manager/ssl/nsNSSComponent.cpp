@@ -102,23 +102,19 @@ int nsNSSComponent::mInstanceCount = 0;
 // Forward declaration.
 nsresult CommonInit();
 
-// Take an nsIFile and get a c-string representation of the location of that
-// file (encapsulated in an nsACString). This function handles a
-// platform-specific issue on Windows where Unicode characters that cannot be
-// mapped to the system's codepage will be dropped, resulting in a c-string
-// that is useless to describe the location of the file in question.
+// Take an nsIFile and get a UTF-8-encoded c-string representation of the
+// location of that file (encapsulated in an nsACString).
 // This operation is generally to be avoided, except when interacting with
 // third-party or legacy libraries that cannot handle `nsIFile`s (such as NSS).
+// |result| is encoded in UTF-8.
 nsresult FileToCString(const nsCOMPtr<nsIFile>& file, nsACString& result) {
 #ifdef XP_WIN
-  // Native path will drop Unicode characters that cannot be mapped to system's
-  // codepage, using short (canonical) path as workaround.
-  nsCOMPtr<nsILocalFileWin> fileWin = do_QueryInterface(file);
-  if (!fileWin) {
-    MOZ_LOG(gPIPNSSLog, LogLevel::Debug, ("couldn't get nsILocalFileWin"));
-    return NS_ERROR_FAILURE;
+  nsAutoString path;
+  nsresult rv = file->GetPath(path);
+  if (NS_SUCCEEDED(rv)) {
+    CopyUTF16toUTF8(path, result);
   }
-  return fileWin->GetNativeCanonicalPath(result);
+  return rv;
 #else
   return file->GetNativePath(result);
 #endif
@@ -733,8 +729,8 @@ class LoadLoadableCertsTask final : public Runnable {
   RefPtr<nsNSSComponent> mNSSComponent;
   bool mImportEnterpriseRoots;
   uint32_t mFamilySafetyMode;
-  Vector<nsCString> mPossibleLoadableRootsLocations;
-  Maybe<nsCString> mOSClientCertsModuleLocation;
+  Vector<nsCString> mPossibleLoadableRootsLocations;  // encoded in UTF-8
+  Maybe<nsCString> mOSClientCertsModuleLocation;      // encoded in UTF-8
 };
 
 nsresult LoadLoadableCertsTask::Dispatch() {
@@ -805,6 +801,7 @@ LoadLoadableCertsTask::Run() {
 
 // Returns by reference the path to the desired directory, based on the current
 // settings in the directory service.
+// |result| is encoded in UTF-8.
 static nsresult GetDirectoryPath(const char* directoryKey, nsCString& result) {
   MOZ_ASSERT(NS_IsMainThread());
 
@@ -921,7 +918,7 @@ nsresult nsNSSComponent::BlockUntilLoadableCertsLoaded() {
 }
 
 #ifndef MOZ_NO_SMART_CARDS
-static StaticMutex sCheckForSmartCardChangesMutex;
+static StaticMutex sCheckForSmartCardChangesMutex MOZ_UNANNOTATED;
 static TimeStamp sLastCheckedForSmartCardChanges = TimeStamp::Now();
 #endif
 
@@ -973,6 +970,7 @@ nsresult nsNSSComponent::CheckForSmartCardChanges() {
 
 // Returns by reference the path to the directory containing the file that has
 // been loaded as MOZ_DLL_PREFIX nss3 MOZ_DLL_SUFFIX.
+// |result| is encoded in UTF-8.
 static nsresult GetNSS3Directory(nsCString& result) {
   MOZ_ASSERT(NS_IsMainThread());
 
@@ -1007,6 +1005,7 @@ static nsresult GetNSS3Directory(nsCString& result) {
 // The loadable roots library is probably in the same directory we loaded the
 // NSS shared library from, but in some cases it may be elsewhere. This function
 // enumerates and returns the possible locations as nsCStrings.
+// |possibleLoadableRootsLocations| is encoded in UTF-8.
 static nsresult ListPossibleLoadableRootsLocations(
     Vector<nsCString>& possibleLoadableRootsLocations) {
   MOZ_ASSERT(NS_IsMainThread());
@@ -2037,8 +2036,8 @@ nsresult nsNSSComponent::InitializeNSS() {
     // ensure we have initial values for various root hashes
 #ifdef DEBUG
     mTestBuiltInRootHash.Truncate();
-    Preferences::GetString("security.test.built_in_root_hash",
-                           mTestBuiltInRootHash);
+    Preferences::GetCString("security.test.built_in_root_hash",
+                            mTestBuiltInRootHash);
 #endif
     mContentSigningRootHash.Truncate();
     Preferences::GetCString("security.content.signature.root_hash",
@@ -2398,8 +2397,8 @@ nsNSSComponent::Observe(nsISupports* aSubject, const char* aTopic,
     } else if (prefName.EqualsLiteral("security.test.built_in_root_hash")) {
       MutexAutoLock lock(mMutex);
       mTestBuiltInRootHash.Truncate();
-      Preferences::GetString("security.test.built_in_root_hash",
-                             mTestBuiltInRootHash);
+      Preferences::GetCString("security.test.built_in_root_hash",
+                              mTestBuiltInRootHash);
 #endif  // DEBUG
     } else if (prefName.EqualsLiteral("security.content.signature.root_hash")) {
       MutexAutoLock lock(mMutex);
@@ -2500,36 +2499,10 @@ nsresult nsNSSComponent::RegisterObservers() {
   return NS_OK;
 }
 
-NS_IMETHODIMP
-nsNSSComponent::IsCertTestBuiltInRoot(CERTCertificate* cert, bool* result) {
-  NS_ENSURE_ARG_POINTER(cert);
-  NS_ENSURE_ARG_POINTER(result);
-  *result = false;
+nsresult DoesCertMatchFingerprint(const nsTArray<uint8_t>& cert,
+                                  const nsCString& fingerprint, bool& result) {
+  result = false;
 
-#ifdef DEBUG
-  nsCOMPtr<nsIX509Cert> x509Cert(new nsNSSCertificate(cert));
-  nsAutoString certHash;
-  nsresult rv = x509Cert->GetSha256Fingerprint(certHash);
-  if (NS_FAILED(rv)) {
-    return rv;
-  }
-
-  MutexAutoLock lock(mMutex);
-  if (mTestBuiltInRootHash.IsEmpty()) {
-    return NS_OK;
-  }
-
-  *result = mTestBuiltInRootHash.Equals(certHash);
-#endif  // DEBUG
-
-  return NS_OK;
-}
-
-NS_IMETHODIMP
-nsNSSComponent::IsCertContentSigningRoot(const nsTArray<uint8_t>& cert,
-                                         bool* result) {
-  NS_ENSURE_ARG_POINTER(result);
-  *result = false;
   if (cert.Length() > std::numeric_limits<uint32_t>::max()) {
     return NS_ERROR_INVALID_ARG;
   }
@@ -2541,15 +2514,46 @@ nsNSSComponent::IsCertContentSigningRoot(const nsTArray<uint8_t>& cert,
   }
   SECItem digestItem = {siBuffer, digestArray.Elements(),
                         static_cast<unsigned int>(digestArray.Length())};
-
-  UniquePORTString fingerprintCString(
+  UniquePORTString certFingerprint(
       CERT_Hexify(&digestItem, true /* use colon delimiters */));
-  if (!fingerprintCString) {
+  if (!certFingerprint) {
     return NS_ERROR_FAILURE;
   }
 
+  result = fingerprint.Equals(certFingerprint.get());
+  return NS_OK;
+}
+
+NS_IMETHODIMP
+nsNSSComponent::IsCertTestBuiltInRoot(const nsTArray<uint8_t>& cert,
+                                      bool* result) {
+  NS_ENSURE_ARG_POINTER(result);
+  *result = false;
+
+#ifdef DEBUG
   MutexAutoLock lock(mMutex);
-  *result = mContentSigningRootHash.Equals(fingerprintCString.get());
+  nsresult rv = DoesCertMatchFingerprint(cert, mTestBuiltInRootHash, *result);
+  if (NS_FAILED(rv)) {
+    return rv;
+  }
+#endif  // DEBUG
+
+  return NS_OK;
+}
+
+NS_IMETHODIMP
+nsNSSComponent::IsCertContentSigningRoot(const nsTArray<uint8_t>& cert,
+                                         bool* result) {
+  NS_ENSURE_ARG_POINTER(result);
+  *result = false;
+
+  MutexAutoLock lock(mMutex);
+  nsresult rv =
+      DoesCertMatchFingerprint(cert, mContentSigningRootHash, *result);
+  if (NS_FAILED(rv)) {
+    return rv;
+  }
+
   return NS_OK;
 }
 
@@ -2673,11 +2677,15 @@ UniqueCERTCertList FindClientCertificatesWithPrivateKeys() {
       PK11SlotInfo* slot = list->module->slots[i];
       MOZ_LOG(gPIPNSSLog, LogLevel::Debug,
               ("    slot '%s'", PK11_GetSlotName(slot)));
-      // If this is the internal certificate/key slot, there may be many more
-      // certificates than private keys, so search by private keys.
-      if (internalSlot.get() == slot) {
+      // If this is the internal certificate/key slot or the slot on the
+      // builtin roots module, there may be many more certificates than private
+      // keys, so search by private keys (PK11_HasRootCerts will be true if the
+      // slot contains an object with the vendor-specific CK_CLASS
+      // CKO_NSS_BUILTIN_ROOT_LIST, which should only be the case for the NSS
+      // builtin roots module).
+      if (internalSlot.get() == slot || PK11_HasRootCerts(slot)) {
         MOZ_LOG(gPIPNSSLog, LogLevel::Debug,
-                ("    (looking at internal slot)"));
+                ("    (looking at internal/builtin slot)"));
         if (PK11_Authenticate(slot, true, nullptr) != SECSuccess) {
           MOZ_LOG(gPIPNSSLog, LogLevel::Debug, ("    (couldn't authenticate)"));
           continue;

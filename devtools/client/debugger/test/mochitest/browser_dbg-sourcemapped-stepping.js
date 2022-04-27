@@ -2,6 +2,8 @@
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at <http://mozilla.org/MPL/2.0/>. */
 
+"use strict";
+
 // Tests for stepping through Babel's compile output.
 requestLongerTimeout(4);
 
@@ -36,11 +38,8 @@ async function breakpointSteps(dbg, target, fixture, { line, column }, steps) {
 }
 
 async function runSteps(dbg, source, steps) {
-  const {
-    selectors: { getVisibleSelectedFrame },
-  } = dbg;
-
   for (const [i, [type, position]] of steps.entries()) {
+    info(`Step ${i}`);
     switch (type) {
       case "stepOver":
         await stepOver(dbg);
@@ -52,13 +51,7 @@ async function runSteps(dbg, source, steps) {
         throw new Error("Unknown stepping type");
     }
 
-    const { location } = getVisibleSelectedFrame();
-
-    is(location.sourceId, source.id, `Step ${i} has correct sourceId`);
-    is(location.line, position.line, `Step ${i} has correct line`);
-    is(location.column, position.column, `Step ${i} has correct column`);
-
-    assertPausedLocation(dbg);
+    assertPausedAtSourceAndLine(dbg, source.id, position.line, position.column);
   }
 }
 

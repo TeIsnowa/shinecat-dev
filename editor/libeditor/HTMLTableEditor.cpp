@@ -237,8 +237,8 @@ nsresult HTMLEditor::InsertTableCellsWithTransaction(
       MOZ_ASSERT_UNREACHABLE("Invalid InsertPosition");
   }
 
-  AutoPlaceholderBatch treateAsOneTransaction(*this,
-                                              ScrollSelectionIntoView::Yes);
+  AutoPlaceholderBatch treateAsOneTransaction(
+      *this, ScrollSelectionIntoView::Yes, __FUNCTION__);
   // Prevent auto insertion of BR in new cell until we're done
   AutoEditSubActionNotifier startToHandleEditSubAction(
       *this, EditSubAction::eInsertNode, nsIEditor::eNext, ignoredError);
@@ -485,8 +485,8 @@ nsresult HTMLEditor::InsertTableColumnsWithTransaction(
   // Should not be empty since we've already found a cell.
   MOZ_ASSERT(!tableSize.IsEmpty());
 
-  AutoPlaceholderBatch treateAsOneTransaction(*this,
-                                              ScrollSelectionIntoView::Yes);
+  AutoPlaceholderBatch treateAsOneTransaction(
+      *this, ScrollSelectionIntoView::Yes, __FUNCTION__);
   // Prevent auto insertion of <br> element in new cell until we're done.
   AutoEditSubActionNotifier startToHandleEditSubAction(
       *this, EditSubAction::eInsertNode, nsIEditor::eNext, ignoredError);
@@ -576,12 +576,15 @@ nsresult HTMLEditor::InsertTableColumnsWithTransaction(
       // InsertTableCellsWithTransaction() do the work.  Insert a new cell
       // before current one.
       CollapseSelectionToStartOf(*cellData.mElement, ignoredError);
-      if (NS_WARN_IF(ignoredError.ErrorCodeIs(NS_ERROR_EDITOR_DESTROYED))) {
+      if (MOZ_UNLIKELY(ignoredError.ErrorCodeIs(NS_ERROR_EDITOR_DESTROYED))) {
+        NS_WARNING(
+            "EditorBase::CollapseSelectionToStartOf() caused destroying the "
+            "editor");
         return NS_ERROR_EDITOR_DESTROYED;
       }
       NS_WARNING_ASSERTION(
           !ignoredError.Failed(),
-          "HTMLEditor::CollapseSelectionToStartOf() failed, but ignored");
+          "EditorBase::CollapseSelectionToStartOf() failed, but ignored");
       ignoredError.SuppressException();
       rv = InsertTableCellsWithTransaction(aNumberOfColumnsToInsert,
                                            InsertPosition::eBeforeSelectedCell);
@@ -637,12 +640,15 @@ nsresult HTMLEditor::InsertTableColumnsWithTransaction(
     // makes this futile.  We must use NormalizeTableInternal() first to assure
     // that there are cells in each cellmap location.
     CollapseSelectionToStartOf(*lastCellNode, ignoredError);
-    if (NS_WARN_IF(ignoredError.ErrorCodeIs(NS_ERROR_EDITOR_DESTROYED))) {
+    if (MOZ_UNLIKELY(ignoredError.ErrorCodeIs(NS_ERROR_EDITOR_DESTROYED))) {
+      NS_WARNING(
+          "EditorBase::CollapseSelectionToStartOf() caused destroying the "
+          "editor");
       return NS_ERROR_EDITOR_DESTROYED;
     }
     NS_WARNING_ASSERTION(
         !ignoredError.Failed(),
-        "HTMLEditor::CollapseSelectionToStartOf() failed, but ignored");
+        "EditorBase::CollapseSelectionToStartOf() failed, but ignored");
     ignoredError.SuppressException();
     rv = InsertTableCellsWithTransaction(aNumberOfColumnsToInsert,
                                          InsertPosition::eAfterSelectedCell);
@@ -718,8 +724,8 @@ nsresult HTMLEditor::InsertTableRowsWithTransaction(
   // Should not be empty since we've already found a cell.
   MOZ_ASSERT(!tableSize.IsEmpty());
 
-  AutoPlaceholderBatch treateAsOneTransaction(*this,
-                                              ScrollSelectionIntoView::Yes);
+  AutoPlaceholderBatch treateAsOneTransaction(
+      *this, ScrollSelectionIntoView::Yes, __FUNCTION__);
   // Prevent auto insertion of BR in new cell until we're done
   AutoEditSubActionNotifier startToHandleEditSubAction(
       *this, EditSubAction::eInsertNode, nsIEditor::eNext, ignoredError);
@@ -973,8 +979,8 @@ NS_IMETHODIMP HTMLEditor::DeleteTable() {
     return NS_ERROR_FAILURE;
   }
 
-  AutoPlaceholderBatch treateAsOneTransaction(*this,
-                                              ScrollSelectionIntoView::Yes);
+  AutoPlaceholderBatch treateAsOneTransaction(
+      *this, ScrollSelectionIntoView::Yes, __FUNCTION__);
   rv = DeleteTableElementAndChildrenWithTransaction(*table);
   NS_WARNING_ASSERTION(
       NS_SUCCEEDED(rv),
@@ -1024,8 +1030,8 @@ nsresult HTMLEditor::DeleteTableCellWithTransaction(
     return NS_ERROR_FAILURE;  // XXX Should we just return NS_OK?
   }
 
-  AutoPlaceholderBatch treateAsOneTransaction(*this,
-                                              ScrollSelectionIntoView::Yes);
+  AutoPlaceholderBatch treateAsOneTransaction(
+      *this, ScrollSelectionIntoView::Yes, __FUNCTION__);
   // Prevent rules testing until we're done
   IgnoredErrorResult ignoredError;
   AutoEditSubActionNotifier startToHandleEditSubAction(
@@ -1317,8 +1323,8 @@ nsresult HTMLEditor::DeleteTableCellContentsWithTransaction() {
     return NS_ERROR_FAILURE;  // XXX Should we just return NS_OK?
   }
 
-  AutoPlaceholderBatch treateAsOneTransaction(*this,
-                                              ScrollSelectionIntoView::Yes);
+  AutoPlaceholderBatch treateAsOneTransaction(
+      *this, ScrollSelectionIntoView::Yes, __FUNCTION__);
   // Prevent rules testing until we're done
   IgnoredErrorResult ignoredError;
   AutoEditSubActionNotifier startToHandleEditSubAction(
@@ -1415,8 +1421,8 @@ nsresult HTMLEditor::DeleteSelectedTableColumnsWithTransaction(
     return error.StealNSResult();
   }
 
-  AutoPlaceholderBatch treateAsOneTransaction(*this,
-                                              ScrollSelectionIntoView::Yes);
+  AutoPlaceholderBatch treateAsOneTransaction(
+      *this, ScrollSelectionIntoView::Yes, __FUNCTION__);
 
   // Prevent rules testing until we're done
   IgnoredErrorResult ignoredError;
@@ -1671,8 +1677,8 @@ nsresult HTMLEditor::DeleteSelectedTableRowsWithTransaction(
     return error.StealNSResult();
   }
 
-  AutoPlaceholderBatch treateAsOneTransaction(*this,
-                                              ScrollSelectionIntoView::Yes);
+  AutoPlaceholderBatch treateAsOneTransaction(
+      *this, ScrollSelectionIntoView::Yes, __FUNCTION__);
 
   // Prevent rules testing until we're done
   IgnoredErrorResult ignoredError;
@@ -2007,7 +2013,7 @@ NS_IMETHODIMP HTMLEditor::SelectAllTableCells() {
 
   // Suppress nsISelectionListener notification
   // until all selection changes are finished
-  SelectionBatcher selectionBatcher(SelectionRef());
+  SelectionBatcher selectionBatcher(SelectionRef(), __FUNCTION__);
 
   // It is now safe to clear the selection
   // BE SURE TO RESET IT BEFORE LEAVING!
@@ -2122,7 +2128,7 @@ NS_IMETHODIMP HTMLEditor::SelectTableRow() {
 
   // Suppress nsISelectionListener notification
   // until all selection changes are finished
-  SelectionBatcher selectionBatcher(SelectionRef());
+  SelectionBatcher selectionBatcher(SelectionRef(), __FUNCTION__);
 
   // It is now safe to clear the selection
   // BE SURE TO RESET IT BEFORE LEAVING!
@@ -2231,7 +2237,7 @@ NS_IMETHODIMP HTMLEditor::SelectTableColumn() {
 
   // Suppress nsISelectionListener notification
   // until all selection changes are finished
-  SelectionBatcher selectionBatcher(SelectionRef());
+  SelectionBatcher selectionBatcher(SelectionRef(), __FUNCTION__);
 
   // It is now safe to clear the selection
   // BE SURE TO RESET IT BEFORE LEAVING!
@@ -2334,8 +2340,8 @@ NS_IMETHODIMP HTMLEditor::SplitTableCell() {
     return NS_OK;
   }
 
-  AutoPlaceholderBatch treateAsOneTransaction(*this,
-                                              ScrollSelectionIntoView::Yes);
+  AutoPlaceholderBatch treateAsOneTransaction(
+      *this, ScrollSelectionIntoView::Yes, __FUNCTION__);
   // Prevent auto insertion of BR in new cell until we're done
   IgnoredErrorResult ignoredError;
   AutoEditSubActionNotifier startToHandleEditSubAction(
@@ -2609,8 +2615,8 @@ NS_IMETHODIMP HTMLEditor::SwitchTableCellHeaderType(Element* aSourceCell,
     return EditorBase::ToGenericNSResult(rv);
   }
 
-  AutoPlaceholderBatch treatAsOneTransaction(*this,
-                                             ScrollSelectionIntoView::Yes);
+  AutoPlaceholderBatch treatAsOneTransaction(
+      *this, ScrollSelectionIntoView::Yes, __FUNCTION__);
   // Prevent auto insertion of BR in new cell created by
   // ReplaceContainerAndCloneAttributesWithTransaction().
   IgnoredErrorResult ignoredError;
@@ -2682,8 +2688,8 @@ NS_IMETHODIMP HTMLEditor::JoinTableCells(bool aMergeNonContiguousContents) {
     return NS_ERROR_FAILURE;  // XXX Should we just return NS_OK?
   }
 
-  AutoPlaceholderBatch treateAsOneTransaction(*this,
-                                              ScrollSelectionIntoView::Yes);
+  AutoPlaceholderBatch treateAsOneTransaction(
+      *this, ScrollSelectionIntoView::Yes, __FUNCTION__);
   // Don't let Rules System change the selection
   AutoTransactionsConserveSelection dontChangeSelection(*this);
 
@@ -3347,8 +3353,8 @@ nsresult HTMLEditor::NormalizeTableInternal(Element& aTableOrElementInTable) {
   // Save current selection
   AutoSelectionRestorer restoreSelectionLater(*this);
 
-  AutoPlaceholderBatch treateAsOneTransaction(*this,
-                                              ScrollSelectionIntoView::Yes);
+  AutoPlaceholderBatch treateAsOneTransaction(
+      *this, ScrollSelectionIntoView::Yes, __FUNCTION__);
   // Prevent auto insertion of BR in new cell until we're done
   IgnoredErrorResult ignoredError;
   AutoEditSubActionNotifier startToHandleEditSubAction(
@@ -4046,7 +4052,7 @@ void HTMLEditor::SetSelectionAfterTableEdit(Element* aTable, int32_t aRow,
     DebugOnly<nsresult> rvIgnored = CollapseSelectionTo(atTable);
     NS_WARNING_ASSERTION(
         NS_SUCCEEDED(rvIgnored),
-        "HTMLEditor::CollapseSelectionTo() failed, but ignored");
+        "EditorBase::CollapseSelectionTo() failed, but ignored");
     return;
   }
   // Last resort: Set selection to start of doc

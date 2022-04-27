@@ -64,7 +64,6 @@ bool IsSearchbox() const;
 nsStaticAtom* ARIARoleAtom() const;
 
 virtual mozilla::a11y::GroupPos GroupPosition() override;
-void ScrollTo(uint32_t aScrollType);
 void ScrollToPoint(uint32_t aScrollType, int32_t aX, int32_t aY);
 
 void Announce(const nsString& aAnnouncement, uint16_t aPriority);
@@ -72,8 +71,6 @@ void Announce(const nsString& aAnnouncement, uint16_t aPriority);
 int32_t CaretLineNumber();
 virtual int32_t CaretOffset() const override;
 void SetCaretOffset(int32_t aOffset);
-
-int32_t SelectionCount();
 
 virtual void TextSubstring(int32_t aStartOffset, int32_t aEndOfset,
                            nsAString& aText) const override;
@@ -102,9 +99,6 @@ LayoutDeviceIntRect TextBounds(
 LayoutDeviceIntRect CharBounds(int32_t aOffset, uint32_t aCoordType);
 
 int32_t OffsetAtPoint(int32_t aX, int32_t aY, uint32_t aCoordType);
-
-bool SelectionBoundsAt(int32_t aSelectionNum, nsString& aData,
-                       int32_t* aStartOffset, int32_t* aEndOffset);
 
 bool SetSelectionBoundsAt(int32_t aSelectionNum, int32_t aStartOffset,
                           int32_t aEndOffset);
@@ -198,7 +192,6 @@ void TableSelectColumn(uint32_t aCol);
 void TableSelectRow(uint32_t aRow);
 void TableUnselectColumn(uint32_t aCol);
 void TableUnselectRow(uint32_t aRow);
-bool TableIsProbablyForLayout();
 RemoteAccessible* AtkTableColumnHeader(int32_t aCol);
 RemoteAccessible* AtkTableRowHeader(int32_t aRow);
 

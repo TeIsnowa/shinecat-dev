@@ -23,6 +23,12 @@ const PREF_CONTAINERS_EXTENSION = "privacy.userContext.extension";
 // Strings to identify ExtensionSettingsStore overrides
 const CONTAINERS_KEY = "privacy.containers";
 
+const PREF_USE_SYSTEM_COLORS = "browser.display.use_system_colors";
+const PREF_CONTENT_APPEARANCE =
+  "layout.css.prefers-color-scheme.content-override";
+const FORCED_COLORS_QUERY = matchMedia("(forced-colors)");
+const SYSTEM_DARK_MODE_QUERY = matchMedia("(-moz-system-dark-theme)");
+
 const AUTO_UPDATE_CHANGED_TOPIC =
   UpdateUtils.PER_INSTALLATION_PREFS["app.update.auto"].observerTopic;
 const BACKGROUND_UPDATE_CHANGED_TOPIC =
@@ -45,6 +51,7 @@ Preferences.addAll([
 
   // Downloads
   { id: "browser.download.useDownloadDir", type: "bool" },
+  { id: "browser.download.always_ask_before_handling_new_types", type: "bool" },
   { id: "browser.download.folderList", type: "int" },
   { id: "browser.download.dir", type: "file" },
 
@@ -718,7 +725,6 @@ var gMainPane = {
     setEventListener("typeColumn", "click", gMainPane.sort);
     setEventListener("actionColumn", "click", gMainPane.sort);
     setEventListener("chooseFolder", "command", gMainPane.chooseFolder);
-    setEventListener("saveWhere", "command", gMainPane.handleSaveToCommand);
     Preferences.get("browser.download.folderList").on(
       "change",
       gMainPane.displayDownloadDirPref.bind(gMainPane)
@@ -753,6 +759,8 @@ var gMainPane = {
       browserBundle.getString("userContextBanking.label"),
       browserBundle.getString("userContextShopping.label"),
     ]);
+
+    AppearanceChooser.init();
 
     // Notify observers that the UI is now ready
     Services.obs.notifyObservers(window, "main-pane-loaded");
@@ -1090,7 +1098,7 @@ var gMainPane = {
       let description = document.createXULElement("description");
       description.classList.add("message-bar-description");
 
-      if (i == 0 && gMainPane.getLocaleDirection(locales[0]) === "rtl") {
+      if (i == 0 && Services.intl.getScriptDirection(locales[0]) === "rtl") {
         description.classList.add("rtl-locale");
       }
       description.setAttribute("flex", "1");
@@ -1389,29 +1397,6 @@ var gMainPane = {
   },
 
   /**
-   * Returns the assumed script directionality for known Firefox locales. This is
-   * somewhat crude, but should work until Bug 1750781 lands.
-   *
-   * TODO (Bug 1750781) - This should use Intl.LocaleInfo once it is standardized (see
-   * Bug 1693576), rather than maintaining a hardcoded list of RTL locales.
-   *
-   * @param {string} locale
-   * @return {"ltr" | "rtl"}
-   */
-  getLocaleDirection(locale) {
-    if (
-      locale == "ar" ||
-      locale == "ckb" ||
-      locale == "fa" ||
-      locale == "he" ||
-      locale == "ur"
-    ) {
-      return "rtl";
-    }
-    return "ltr";
-  },
-
-  /**
    * Determine the transition strategy for switching the locale based on prefs
    * and the switched locales.
    *
@@ -1427,8 +1412,8 @@ var gMainPane = {
 
     if (Services.prefs.getBoolPref("intl.multilingual.liveReload")) {
       if (
-        gMainPane.getLocaleDirection(newLocales[0]) !==
-          gMainPane.getLocaleDirection(appLocalesAsBCP47[0]) &&
+        Services.intl.getScriptDirection(newLocales[0]) !==
+          Services.intl.getScriptDirection(appLocalesAsBCP47[0]) &&
         !Services.prefs.getBoolPref("intl.multilingual.liveReloadBidirectional")
       ) {
         // Bug 1750852: The directionality of the text changed, which requires a restart
@@ -2099,6 +2084,7 @@ var gMainPane = {
     Services.prefs.removeObserver(PREF_CONTAINERS_EXTENSION, this);
     Services.obs.removeObserver(this, AUTO_UPDATE_CHANGED_TOPIC);
     Services.obs.removeObserver(this, BACKGROUND_UPDATE_CHANGED_TOPIC);
+    AppearanceChooser.destroy();
   },
 
   // nsISupports
@@ -2379,7 +2365,10 @@ var gMainPane = {
 
     let internalMenuItem;
     // Add the "Open in Firefox" option for optional internal handlers.
-    if (handlerInfo instanceof InternalHandlerInfoWrapper) {
+    if (
+      handlerInfo instanceof InternalHandlerInfoWrapper &&
+      !handlerInfo.preventInternalViewing
+    ) {
       internalMenuItem = document.createXULElement("menuitem");
       internalMenuItem.setAttribute(
         "action",
@@ -2918,6 +2907,12 @@ var gMainPane = {
    *   browser.download.folderList preference.
    *   False - Always ask the user where to save a file and default to
    *   browser.download.lastDir when displaying a folder picker dialog.
+   * browser.download.always_ask_before_handling_new_types - bool
+   *   Defines the default behavior for new file handlers.
+   *   True - When downloading a file that doesn't match any existing
+   *   handlers, ask the user whether to save or open the file.
+   *   False - Save the file. The user can change the default action in
+   *   the Applications section in the preferences UI.
    * browser.download.dir - local file handle
    *   A local folder the user may have selected for downloaded files to be
    *   saved. Migration of other browser settings may also set this path.
@@ -2934,8 +2929,6 @@ var gMainPane = {
    *     1 - The system's downloads folder is the default download location.
    *     2 - The default download location is elsewhere as specified in
    *         browser.download.dir.
-   *     3 - The default download location is elsewhere as specified by
-   *         cloud storage API getDownloadFolder
    * browser.download.downloadDir
    *   deprecated.
    * browser.download.defaultFolder
@@ -2959,100 +2952,8 @@ var gMainPane = {
     chooseFolder.disabled =
       !useDownloadDirPreference.value || dirPreference.locked;
 
-    this.readCloudStorage().catch(Cu.reportError);
     // don't override the preference's value in UI
     return undefined;
-  },
-
-  /**
-   * Show/Hide the cloud storage radio button with provider name as label if
-   * cloud storage provider is in use.
-   * Select cloud storage radio button if browser.download.useDownloadDir is true
-   * and browser.download.folderList has value 3. Enables/disables the folder field
-   * and Browse button if cloud storage radio button is selected.
-   *
-   */
-  async readCloudStorage() {
-    // Get preferred provider in use display name
-    let providerDisplayName = await CloudStorage.getProviderIfInUse();
-    if (providerDisplayName) {
-      // Show cloud storage radio button with provider name in label
-      let saveToCloudRadio = document.getElementById("saveToCloud");
-      document.l10n.setAttributes(
-        saveToCloudRadio,
-        "save-files-to-cloud-storage",
-        {
-          "service-name": providerDisplayName,
-        }
-      );
-      saveToCloudRadio.hidden = false;
-
-      let useDownloadDirPref = Preferences.get(
-        "browser.download.useDownloadDir"
-      );
-      let folderListPref = Preferences.get("browser.download.folderList");
-
-      // Check if useDownloadDir is true and folderListPref is set to Cloud Storage value 3
-      // before selecting cloudStorageradio button. Disable folder field and Browse button if
-      // 'Save to Cloud Storage Provider' radio option is selected
-      if (useDownloadDirPref.value && folderListPref.value === 3) {
-        document.getElementById("saveWhere").selectedItem = saveToCloudRadio;
-        document.getElementById("downloadFolder").disabled = true;
-        document.getElementById("chooseFolder").disabled = true;
-      }
-    }
-  },
-
-  /**
-   * Handle clicks to 'Save To <custom path> or <system default downloads>' and
-   * 'Save to <cloud storage provider>' if cloud storage radio button is displayed in UI.
-   * Sets browser.download.folderList value and Enables/disables the folder field and Browse
-   * button based on option selected.
-   */
-  handleSaveToCommand(event) {
-    return this.handleSaveToCommandTask(event).catch(Cu.reportError);
-  },
-  async handleSaveToCommandTask(event) {
-    if (event.target.id !== "saveToCloud" && event.target.id !== "saveTo") {
-      return;
-    }
-    // Check if Save To Cloud Storage Provider radio option is displayed in UI
-    // before continuing.
-    let saveToCloudRadio = document.getElementById("saveToCloud");
-    if (!saveToCloudRadio.hidden) {
-      // When switching between SaveTo and SaveToCloud radio button
-      // with useDownloadDirPref value true, if selectedIndex is other than
-      // SaveTo radio button disable downloadFolder filefield and chooseFolder button
-      let saveWhere = document.getElementById("saveWhere");
-      let useDownloadDirPref = Preferences.get(
-        "browser.download.useDownloadDir"
-      );
-      if (useDownloadDirPref.value) {
-        let downloadFolder = document.getElementById("downloadFolder");
-        let chooseFolder = document.getElementById("chooseFolder");
-        downloadFolder.disabled =
-          saveWhere.selectedIndex || useDownloadDirPref.locked;
-        chooseFolder.disabled =
-          saveWhere.selectedIndex || useDownloadDirPref.locked;
-      }
-
-      // Set folderListPref value depending on radio option
-      // selected. folderListPref should be set to 3 if Save To Cloud Storage Provider
-      // option is selected. If user switch back to 'Save To' custom path or system
-      // default Downloads, check pref 'browser.download.dir' before setting respective
-      // folderListPref value. If currentDirPref is unspecified folderList should
-      // default to 1
-      let folderListPref = Preferences.get("browser.download.folderList");
-      let saveTo = document.getElementById("saveTo");
-      if (saveWhere.selectedItem == saveToCloudRadio) {
-        folderListPref.value = 3;
-      } else if (saveWhere.selectedItem == saveTo) {
-        let currentDirPref = Preferences.get("browser.download.dir");
-        folderListPref.value = currentDirPref.value
-          ? await this._folderToIndex(currentDirPref.value)
-          : 1;
-      }
-    }
   },
 
   /**
@@ -3134,11 +3035,9 @@ var gMainPane = {
     var iconUrlSpec;
 
     let folderIndex = folderListPref.value;
+    // For legacy users using cloudstorage pref with folderIndex as 3 (See bug 1751093),
+    // compute folderIndex using value in currentDirPref
     if (folderIndex == 3) {
-      // When user has selected cloud storage, use value in currentDirPref to
-      // compute index to display download folder label and icon to avoid
-      // displaying blank downloadFolder label and icon on load of preferences UI
-      // Set folderIndex to 1 if currentDirPref is unspecified
       folderIndex = currentDirPref.value
         ? await this._folderToIndex(currentDirPref.value)
         : 1;
@@ -3674,6 +3573,10 @@ class InternalHandlerInfoWrapper extends HandlerInfoWrapper {
     super.store();
   }
 
+  get preventInternalViewing() {
+    return false;
+  }
+
   get enabled() {
     throw Components.Exception("", Cr.NS_ERROR_NOT_IMPLEMENTED);
   }
@@ -3684,8 +3587,14 @@ class PDFHandlerInfoWrapper extends InternalHandlerInfoWrapper {
     super(TYPE_PDF, null);
   }
 
+  get preventInternalViewing() {
+    return Services.prefs.getBoolPref(PREF_PDFJS_DISABLED);
+  }
+
+  // PDF is always shown in the list, but the 'show internally' option is
+  // hidden when the internal PDF viewer is disabled.
   get enabled() {
-    return !Services.prefs.getBoolPref(PREF_PDFJS_DISABLED);
+    return true;
   }
 }
 
@@ -3698,3 +3607,114 @@ class ViewableInternallyHandlerInfoWrapper extends InternalHandlerInfoWrapper {
     return DownloadIntegration.shouldViewDownloadInternally(this.type);
   }
 }
+
+const AppearanceChooser = {
+  // NOTE: This order must match the values of the
+  // layout.css.prefers-color-scheme.content-override
+  // preference.
+  choices: ["dark", "light", "system", "browser"],
+  chooser: null,
+  radios: null,
+  warning: null,
+
+  init() {
+    this.chooser = document.getElementById("web-appearance-chooser");
+    this.radios = [...this.chooser.querySelectorAll("input")];
+    for (let radio of this.radios) {
+      radio.addEventListener("change", e => {
+        let index = this.choices.indexOf(e.target.value);
+        // The pref change callback will update state if needed.
+        if (index >= 0) {
+          Services.prefs.setIntPref(PREF_CONTENT_APPEARANCE, index);
+        } else {
+          // Shouldn't happen but let's do something sane...
+          Services.prefs.clearUserPref(PREF_CONTENT_APPEARANCE);
+        }
+      });
+    }
+
+    // Forward the click to the "colors" button.
+    document
+      .getElementById("web-appearance-manage-colors-link")
+      .addEventListener("click", function(e) {
+        document.getElementById("colors").click();
+        e.preventDefault();
+      });
+
+    document
+      .getElementById("web-appearance-manage-themes-link")
+      .addEventListener("click", function(e) {
+        window.browsingContext.topChromeWindow.BrowserOpenAddonsMgr(
+          "addons://list/theme"
+        );
+        e.preventDefault();
+      });
+
+    this.warning = document.getElementById("web-appearance-override-warning");
+
+    FORCED_COLORS_QUERY.addEventListener("change", this);
+    SYSTEM_DARK_MODE_QUERY.addEventListener("change", this);
+    Services.prefs.addObserver(PREF_USE_SYSTEM_COLORS, this);
+    Services.obs.addObserver(this, "look-and-feel-changed");
+    this._update();
+  },
+
+  _update() {
+    this._updateWarning();
+    this._updateOptions();
+  },
+
+  handleEvent(e) {
+    this._update();
+  },
+
+  observe(subject, topic, data) {
+    this._update();
+  },
+
+  destroy() {
+    Services.prefs.removeObserver(PREF_USE_SYSTEM_COLORS, this);
+    Services.obs.removeObserver(this, "look-and-feel-changed");
+    FORCED_COLORS_QUERY.removeEventListener("change", this);
+    SYSTEM_DARK_MODE_QUERY.removeEventListener("change", this);
+  },
+
+  _isValueDark(value) {
+    switch (value) {
+      case "light":
+        return false;
+      case "dark":
+        return true;
+      case "browser":
+        return Services.appinfo.contentThemeDerivedColorSchemeIsDark;
+      case "system":
+        return SYSTEM_DARK_MODE_QUERY.matches;
+    }
+    throw new Error("Unknown value");
+  },
+
+  _updateOptions() {
+    let index = Services.prefs.getIntPref(PREF_CONTENT_APPEARANCE);
+    if (index < 0 || index >= this.choices.length) {
+      index = Services.prefs
+        .getDefaultBranch(null)
+        .getIntPref(PREF_CONTENT_APPEARANCE);
+    }
+    let value = this.choices[index];
+    for (let radio of this.radios) {
+      let checked = radio.value == value;
+      let isDark = this._isValueDark(radio.value);
+
+      radio.checked = checked;
+      radio.closest("label").classList.toggle("dark", isDark);
+    }
+  },
+
+  _updateWarning() {
+    let forcingColorsAndNoColorSchemeSupport =
+      FORCED_COLORS_QUERY.matches &&
+      (AppConstants.platform == "win" ||
+        !Services.prefs.getBoolPref(PREF_USE_SYSTEM_COLORS));
+    this.warning.hidden = !forcingColorsAndNoColorSchemeSupport;
+  },
+};

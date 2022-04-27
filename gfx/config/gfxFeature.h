@@ -40,7 +40,11 @@ namespace gfx {
   _(DMABUF, Feature, "DMABUF")                                           \
   _(WINDOW_OCCLUSION, Feature, "WINDOW_OCCLUSION")                       \
   _(VAAPI, Feature, "VA-API video decoding")                             \
-  /* Add new entries above this comment */
+  _(VIDEO_OVERLAY, Feature, "video overlay")                             \
+  _(HW_DECODED_VIDEO_NO_COPY, Feature, "Hardware decoded video no copy") \
+  _(VP8_HW_DECODE, Feature, "VP8 hardware decoding")                     \
+  _(VP9_HW_DECODE, Feature, "VP9 hardware decoding")
+/* Add new entries above this comment */
 
 enum class Feature : uint32_t {
 #define MAKE_ENUM(name, type, desc) name,

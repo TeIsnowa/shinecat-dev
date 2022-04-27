@@ -864,7 +864,10 @@ class SVGFilterObserverListForCanvasContext final
 
 void SVGFilterObserverListForCanvasContext::OnRenderingChange() {
   if (!mContext) {
-    MOZ_CRASH("GFX: This should never be called without a context");
+    NS_WARNING(
+        "GFX: This should never be called without a context, except during "
+        "cycle collection (when DetachFromContext has been called)");
+    return;
   }
   // Refresh the cached FilterDescription in mContext->CurrentState().filter.
   // If this filter is not at the top of the state stack, we'll refresh the
@@ -1399,6 +1402,10 @@ SVGObserverUtils::ReferenceState SVGObserverUtils::GetAndObserveMasks(
 
 SVGGeometryElement* SVGObserverUtils::GetAndObserveTextPathsPath(
     nsIFrame* aTextPathFrame) {
+  // Continuations can come and go during reflow, and we don't need to observe
+  // the referenced element more than once for a given node.
+  aTextPathFrame = aTextPathFrame->FirstContinuation();
+
   SVGTextPathObserver* property =
       aTextPathFrame->GetProperty(HrefAsTextPathProperty());
 

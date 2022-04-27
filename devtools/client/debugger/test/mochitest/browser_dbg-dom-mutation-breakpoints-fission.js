@@ -4,9 +4,10 @@
 
 // Tests dom mutation breakpoints with a remote frame.
 
-/* import-globals-from ../../../inspector/test/shared-head.js */
+"use strict";
 
 // Import helpers for the inspector
+/* import-globals-from ../../../inspector/test/shared-head.js */
 Services.scriptloader.loadSubScript(
   "chrome://mochitests/content/browser/devtools/client/inspector/test/shared-head.js",
   this
@@ -84,7 +85,7 @@ add_task(async function() {
       () => !content.document.querySelector("input").disabled
     )
   );
-  is(isPaused(dbg), false, "DOM breakpoint should not have been hit");
+  assertNotPaused(dbg, "DOM breakpoint should not have been hit");
 
   info("Restore the disabled attribute");
   await SpecialPowers.spawn(gBrowser.selectedBrowser, [], function() {

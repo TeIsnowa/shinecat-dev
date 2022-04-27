@@ -37,12 +37,14 @@ var HomeOverlay = function(options) {
 };
 
 HomeOverlay.prototype = {
-  create() {
+  create({ pockethost }) {
     const { searchParams } = new URL(window.location.href);
-    const pockethost = searchParams.get(`pockethost`) || `getpocket.com`;
     const locale = searchParams.get(`locale`) || ``;
     const layoutRefresh = searchParams.get(`layoutRefresh`) === `true`;
     const hideRecentSaves = searchParams.get(`hiderecentsaves`) === `true`;
+    const utmSource = searchParams.get(`utmSource`);
+    const utmCampaign = searchParams.get(`utmCampaign`);
+    const utmContent = searchParams.get(`utmContent`);
 
     if (this.active) {
       return;
@@ -56,6 +58,9 @@ HomeOverlay.prototype = {
           locale={locale}
           hideRecentSaves={hideRecentSaves}
           pockethost={pockethost}
+          utmSource={utmSource}
+          utmCampaign={utmCampaign}
+          utmContent={utmContent}
           topics={[
             { title: "Technology", topic: "technology" },
             { title: "Self Improvement", topic: "self-improvement" },
@@ -71,6 +76,10 @@ HomeOverlay.prototype = {
         />,
         document.querySelector(`body`)
       );
+
+      if (window?.matchMedia(`(prefers-color-scheme: dark)`).matches) {
+        document.querySelector(`body`).classList.add(`theme_dark`);
+      }
     } else {
       // For English, we have a discover topics link.
       // For non English, we don't have a link yet for this.

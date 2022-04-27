@@ -1,6 +1,6 @@
 /**
  * @licstart The following is the entire license notice for the
- * Javascript code in this page
+ * JavaScript code in this page
  *
  * Copyright 2022 Mozilla Foundation
  *
@@ -17,7 +17,7 @@
  * limitations under the License.
  *
  * @licend The above is the entire license notice for the
- * Javascript code in this page
+ * JavaScript code in this page
  */
 
 (function webpackUniversalModuleDefinition(root, factory) {
@@ -29,7 +29,7 @@
 		exports["pdfjs-dist/build/pdf.scripting"] = factory();
 	else
 		root.pdfjsScripting = factory();
-})(this, function() {
+})(this, () => {
 return /******/ (() => { // webpackBootstrap
 /******/ 	"use strict";
 /******/ 	var __webpack_modules__ = ([
@@ -641,7 +641,12 @@ class Field extends _pdf_object.PDFObject {
     if (this._isChoice) {
       if (this.multipleSelection) {
         const values = new Set(value);
-        this._currentValueIndices.length = 0;
+
+        if (Array.isArray(this._currentValueIndices)) {
+          this._currentValueIndices.length = 0;
+        } else {
+          this._currentValueIndices = [];
+        }
 
         this._items.forEach(({
           displayValue
@@ -1400,17 +1405,23 @@ class AForm {
   }
 
   _parseDate(cFormat, cDate) {
-    const ddate = Date.parse(cDate);
+    let date = null;
 
-    if (isNaN(ddate)) {
-      try {
-        return this._util.scand(cFormat, cDate);
-      } catch (error) {
-        return null;
+    try {
+      date = this._util.scand(cFormat, cDate);
+    } catch (error) {}
+
+    if (!date) {
+      date = Date.parse(cDate);
+
+      if (isNaN(date)) {
+        date = null;
+      } else {
+        date = new Date(date);
       }
-    } else {
-      return new Date(ddate);
     }
+
+    return date;
   }
 
   AFMergeChange(event = globalThis.event) {
@@ -2607,6 +2618,10 @@ class EventDispatcher {
 
   mergeChange(event) {
     let value = event.value;
+
+    if (Array.isArray(value)) {
+      return value;
+    }
 
     if (typeof value !== "string") {
       value = value.toString();
@@ -4699,6 +4714,10 @@ class Util extends _pdf_object.PDFObject {
   }
 
   scand(cFormat, cDate) {
+    if (typeof cDate !== "string") {
+      return new Date(cDate);
+    }
+
     if (cDate === "") {
       return new Date();
     }
@@ -4857,16 +4876,16 @@ class Util extends _pdf_object.PDFObject {
 
     const [re, actions] = this._scandCache.get(cFormat);
 
-    const matches = new RegExp(re, "g").exec(cDate);
+    const matches = new RegExp(`^${re}$`, "g").exec(cDate);
 
     if (!matches || matches.length !== actions.length + 1) {
       return null;
     }
 
     const data = {
-      year: 0,
+      year: 2000,
       month: 0,
-      day: 0,
+      day: 1,
       hours: 0,
       minutes: 0,
       seconds: 0,
@@ -4937,8 +4956,8 @@ Object.defineProperty(exports, "initSandbox", ({
 
 var _initialization = __w_pdfjs_require__(1);
 
-const pdfjsVersion = '2.13.189';
-const pdfjsBuild = '2bb96a708';
+const pdfjsVersion = '2.14.224';
+const pdfjsBuild = '2be19e828';
 })();
 
 /******/ 	return __webpack_exports__;

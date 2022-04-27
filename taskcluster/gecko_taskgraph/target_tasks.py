@@ -9,6 +9,7 @@ import re
 
 from redo import retry
 from taskgraph.parameters import Parameters
+from taskgraph.util.taskcluster import find_task_id
 
 from gecko_taskgraph import try_option_syntax
 from gecko_taskgraph.util.attributes import (
@@ -16,7 +17,6 @@ from gecko_taskgraph.util.attributes import (
     match_run_on_hg_branches,
 )
 from gecko_taskgraph.util.platforms import platform_family
-from gecko_taskgraph.util.taskcluster import find_task_id
 
 _target_task_methods = {}
 
@@ -566,6 +566,12 @@ def target_tasks_promote_desktop(full_task_graph, parameters, graph_config):
     mozilla_{beta,release} tasks, plus l10n, beetmover, balrog, etc."""
 
     def filter(task):
+        # Bug 1758507 - geckoview ships in the promote phase
+        if "mozilla-esr" not in parameters["project"] and is_geckoview(
+            task, parameters
+        ):
+            return True
+
         if task.attributes.get("shipping_product") != parameters["release_product"]:
             return False
 
@@ -607,12 +613,6 @@ def target_tasks_push_desktop(full_task_graph, parameters, graph_config):
         # Include promotion tasks; these will be optimized out
         if task.label in filtered_for_candidates:
             return True
-        # XXX: Bug 1612540 - include beetmover jobs for publishing geckoview, along
-        # with the regular Firefox (not Devedition!) releases so that they are at sync
-        if "mozilla-esr" not in parameters["project"] and is_geckoview(
-            task, parameters
-        ):
-            return True
 
         if (
             task.attributes.get("shipping_product") == parameters["release_product"]
@@ -651,10 +651,6 @@ def target_tasks_ship_desktop(full_task_graph, parameters, graph_config):
         if task.label in filtered_for_candidates:
             return True
 
-        # XXX: Bug 1619603 - geckoview also ships alongside Firefox RC
-        if is_geckoview(task, parameters) and is_rc:
-            return True
-
         if (
             task.attributes.get("shipping_product") != parameters["release_product"]
             or task.attributes.get("shipping_phase") != "ship"
@@ -682,25 +678,6 @@ def target_tasks_pine(full_task_graph, parameters, graph_config):
         if platform == "linux64-asan":
             return False
         # disable non-pine and tasks with a shipping phase
-        if standard_filter(task, parameters) or filter_out_shipping_phase(
-            task, parameters
-        ):
-            return True
-
-    return [l for l, t in full_task_graph.tasks.items() if filter(t)]
-
-
-@_target_task("cedar_tasks")
-def target_tasks_cedar(full_task_graph, parameters, graph_config):
-    def filter(task):
-        platform = task.attributes.get("build_platform")
-        # disable mobile jobs
-        if str(platform).startswith("android"):
-            return False
-        # disable asan
-        if platform == "linux64-asan":
-            return False
-        # disable non-cedar and tasks with a shipping phase
         if standard_filter(task, parameters) or filter_out_shipping_phase(
             task, parameters
         ):
@@ -1188,42 +1165,6 @@ def target_tasks_raptor_tp6m(full_task_graph, parameters, graph_config):
     return [l for l, t in full_task_graph.tasks.items() if filter(t)]
 
 
-@_target_task("perftest_s7")
-def target_tasks_perftest_s7(full_task_graph, parameters, graph_config):
-    """
-    Select tasks required for running raptor page-load tests on geckoview against S7
-    """
-
-    def filter(task):
-        build_platform = task.attributes.get("build_platform", "")
-        test_platform = task.attributes.get("test_platform", "")
-        attributes = task.attributes
-        vismet = attributes.get("kind") == "visual-metrics-dep"
-        try_name = attributes.get("raptor_try_name")
-
-        if vismet:
-            # Visual metric tasks are configured a bit differently
-            test_platform = task.task.get("extra").get("treeherder-platform")
-            try_name = task.label
-
-        if build_platform and "android" not in build_platform:
-            return False
-        if attributes.get("unittest_suite") != "raptor" and not vismet:
-            return False
-        if "s7" in test_platform and "-qr" in test_platform:
-            if "geckoview" in try_name and (
-                "unity-webgl" in try_name
-                or "speedometer" in try_name
-                or "tp6m-essential" in try_name
-            ):
-                if "power" in try_name:
-                    return False
-                else:
-                    return True
-
-    return [l for l, t in full_task_graph.tasks.items() if filter(t)]
-
-
 @_target_task("condprof")
 def target_tasks_condprof(full_task_graph, parameters, graph_config):
     """
@@ -1231,7 +1172,8 @@ def target_tasks_condprof(full_task_graph, parameters, graph_config):
     """
     for name, task in full_task_graph.tasks.items():
         if task.kind == "condprof":
-            yield name
+            if "a51" not in name:  # bug 1765348
+                yield name
 
 
 @_target_task("system_symbols")

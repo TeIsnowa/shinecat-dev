@@ -24,7 +24,7 @@ class GeckoViewPrompter {
       .slice(1, -1); // Discard surrounding braces
 
     if (aParent) {
-      if (aParent instanceof Window) {
+      if (Window.isInstance(aParent)) {
         this._domWin = aParent;
       } else if (aParent.window) {
         this._domWin = aParent.window;
@@ -50,6 +50,11 @@ class GeckoViewPrompter {
 
   get domWin() {
     return this._domWin;
+  }
+
+  get prompterActor() {
+    const actor = this.domWin?.windowGlobalChild.getActor("GeckoViewPrompter");
+    return actor;
   }
 
   _changeModalState(aEntering) {
@@ -80,6 +85,65 @@ class GeckoViewPrompter {
       Cu.reportError("Failed to change modal state: " + ex);
     }
     return false;
+  }
+
+  _dismissUi() {
+    this.prompterActor?.unregisterPrompt(this);
+    this._dispatcher.dispatch("GeckoView:Prompt:Dismiss", { id: this.id });
+  }
+
+  accept(aInputText = this.inputText) {
+    if (this.callback) {
+      let acceptMsg = {};
+      switch (this.message.type) {
+        case "alert":
+          acceptMsg = null;
+          break;
+        case "button":
+          acceptMsg.button = 0;
+          break;
+        case "text":
+          acceptMsg.text = aInputText;
+          break;
+        default:
+          acceptMsg = null;
+          break;
+      }
+      this.callback(acceptMsg);
+      // Notify the UI that this prompt should be hidden.
+      this._dismissUi();
+    }
+  }
+
+  dismiss() {
+    this.callback(null);
+    // Notify the UI that this prompt should be hidden.
+    this._dismissUi();
+  }
+
+  getPromptType() {
+    switch (this.message.type) {
+      case "alert":
+        return this.message.checkValue ? "alertCheck" : "alert";
+      case "button":
+        return this.message.checkValue ? "confirmCheck" : "confirm";
+      case "text":
+        return this.message.checkValue ? "promptCheck" : "prompt";
+      default:
+        return this.message.type;
+    }
+  }
+
+  getPromptText() {
+    return this.message.msg;
+  }
+
+  getInputText() {
+    return this.inputText;
+  }
+
+  setInputText(aInput) {
+    this.inputText = aInput;
   }
 
   /**
@@ -122,12 +186,13 @@ class GeckoViewPrompter {
     });
   }
 
-  dismiss() {
-    this._dispatcher.dispatch("GeckoView:Prompt:Dismiss", { id: this.id });
-  }
-
   asyncShowPrompt(aMsg, aCallback) {
     let handled = false;
+    this.message = aMsg;
+    this.inputText = aMsg.value;
+    this.callback = aCallback;
+    this.prompterActor?.registerPrompt(this);
+
     const onResponse = response => {
       if (handled) {
         return;
@@ -161,5 +226,6 @@ class GeckoViewPrompter {
         onResponse(null);
       },
     });
+    this.prompterActor?.notifyPromptShow(this);
   }
 }

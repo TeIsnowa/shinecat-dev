@@ -1248,6 +1248,17 @@ impl DrawTarget {
         }
     }
 
+    pub fn offset(&self) -> DeviceIntPoint {
+        match *self {
+            DrawTarget::Default { .. } |
+            DrawTarget::Texture { .. } |
+            DrawTarget::External { .. } => {
+                DeviceIntPoint::zero()
+            }
+            DrawTarget::NativeSurface { offset, .. } => offset,
+        }
+    }
+
     pub fn to_framebuffer_rect(&self, device_rect: DeviceIntRect) -> FramebufferIntRect {
         let mut fb_rect = device_rect_as_framebuffer_rect(&device_rect);
         match *self {
@@ -1652,7 +1663,8 @@ impl Device {
              //  && renderer_name.starts_with("AMD");
              //  (XXX: we apply this restriction to all GPUs to handle switching)
 
-        let is_angle = renderer_name.starts_with("ANGLE");
+        let is_windows_angle = cfg!(target_os = "windows")
+            && renderer_name.starts_with("ANGLE");
         let is_adreno_3xx = renderer_name.starts_with("Adreno (TM) 3");
 
         // Some GPUs require the stride of the data during texture uploads to be
@@ -1671,9 +1683,9 @@ impl Device {
             // On AMD Mac, it must always be a multiple of 256 bytes.
             // We apply this restriction to all GPUs to handle switching
             StrideAlignment::Bytes(NonZeroUsize::new(256).unwrap())
-        } else if is_angle {
-            // On ANGLE, PBO texture uploads get incorrectly truncated if
-            // the stride is greater than the width * bpp.
+        } else if is_windows_angle {
+            // On ANGLE-on-D3D, PBO texture uploads get incorrectly truncated
+            // if the stride is greater than the width * bpp.
             StrideAlignment::Bytes(NonZeroUsize::new(1).unwrap())
         } else {
             // Other platforms may have similar requirements and should be added

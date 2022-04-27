@@ -12,6 +12,7 @@
 namespace mozilla::a11y {
 class Accessible;
 class TextLeafPoint;
+class TextRange;
 
 // This character marks where in the text returned via Text interface,
 // that embedded object characters exist
@@ -129,6 +130,11 @@ class HyperTextAccessibleBase {
   bool IsValidRange(int32_t aStartOffset, int32_t aEndOffset);
 
   /**
+   * Return link count within this hypertext accessible.
+   */
+  uint32_t LinkCount();
+
+  /**
    * Return link accessible at the given index.
    */
   Accessible* LinkAt(uint32_t aIndex);
@@ -158,6 +164,23 @@ class HyperTextAccessibleBase {
    * Return text attributes applied to the accessible.
    */
   virtual already_AddRefed<AccAttributes> DefaultTextAttributes() = 0;
+
+  /**
+   * Return an array of disjoint ranges for selected text within the text
+   * control or the document this accessible belongs to.
+   */
+  virtual void SelectionRanges(nsTArray<TextRange>* aRanges) const = 0;
+
+  /**
+   * Return selected regions count within the accessible.
+   */
+  virtual int32_t SelectionCount();
+
+  /**
+   * Return the start and end offset of the specified selection.
+   */
+  virtual bool SelectionBoundsAt(int32_t aSelectionNum, int32_t* aStartOffset,
+                                 int32_t* aEndOffset);
 
  protected:
   virtual const Accessible* Acc() const = 0;
@@ -189,6 +212,12 @@ class HyperTextAccessibleBase {
   void AdjustOriginIfEndBoundary(TextLeafPoint& aOrigin,
                                  AccessibleTextBoundary aBoundaryType,
                                  bool aAtOffset = false) const;
+
+  /**
+   * Return text selection ranges cropped to this Accessible (rather than for
+   * the entire text control or document). This also excludes collapsed ranges.
+   */
+  virtual void CroppedSelectionRanges(nsTArray<TextRange>& aRanges) const;
 };
 
 }  // namespace mozilla::a11y

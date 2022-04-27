@@ -386,9 +386,11 @@ class HeadersPanel extends Component {
 
       let rows;
       if (value) {
+        const match = value.match(/\n/g);
+        rows = match !== null ? match.length : 0;
         // Need to add 1 for the horizontal scrollbar
         // not to cover the last row of raw data
-        rows = value.match(/\n/g).length + 1;
+        rows = rows + 1;
       }
 
       return tr(
@@ -771,27 +773,21 @@ class HeadersPanel extends Component {
           L10N.getStr("netmonitor.headers.toolbar.block")
         ),
         span({ className: "devtools-separator" }),
-        newEditAndResendPref
-          ? button(
-              {
-                id: "edit-resend-button",
-                className: "devtools-button",
-                title: EDIT_AND_RESEND,
-                onClick: () => {
+        button(
+          {
+            id: "edit-resend-button",
+            className: !newEditAndResendPref
+              ? "devtools-button devtools-dropdown-button"
+              : "devtools-button",
+            title: RESEND,
+            onClick: !newEditAndResendPref
+              ? this.onShowResendMenu
+              : () => {
                   openHTTPCustomRequestTab();
                 },
-              },
-              span({ className: "title" }, EDIT_AND_RESEND)
-            )
-          : button(
-              {
-                id: "edit-resend-button",
-                className: "devtools-button devtools-dropdown-button",
-                title: RESEND,
-                onClick: this.onShowResendMenu,
-              },
-              span({ className: "title" }, RESEND)
-            )
+          },
+          span({ className: "title" }, RESEND)
+        )
       ),
       div(
         { className: "panel-container" },

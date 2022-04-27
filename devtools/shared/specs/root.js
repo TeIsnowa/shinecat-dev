@@ -37,8 +37,6 @@ const rootSpecPrototype = {
     getTab: {
       request: {
         browserId: Option(0, "number"),
-        outerWindowID: Option(0, "number"),
-        tabId: Option(0, "number"),
       },
       response: {
         tab: RetVal("tabDescriptor"),
@@ -80,6 +78,20 @@ const rootSpecPrototype = {
       },
     },
 
+    watchResources: {
+      request: {
+        resourceTypes: Arg(0, "array:string"),
+      },
+      response: {},
+    },
+
+    unwatchResources: {
+      request: {
+        resourceTypes: Arg(0, "array:string"),
+      },
+      oneway: true,
+    },
+
     requestTypes: {
       request: {},
       response: RetVal("json"),
@@ -104,6 +116,15 @@ const rootSpecPrototype = {
     },
     processListChanged: {
       type: "processListChanged",
+    },
+
+    "resource-available-form": {
+      type: "resource-available-form",
+      resources: Arg(0, "array:json"),
+    },
+    "resource-destroyed-form": {
+      type: "resource-destroyed-form",
+      resources: Arg(0, "array:json"),
     },
   },
 };

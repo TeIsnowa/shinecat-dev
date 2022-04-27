@@ -11,6 +11,7 @@
 #include "nsAccessibilityService.h"
 #include "nsCoreUtils.h"
 #include "DocAccessible.h"
+#include "DocAccessibleParent.h"
 #include "HyperTextAccessible.h"
 #include "nsIAccessibleTypes.h"
 #include "Role.h"
@@ -204,16 +205,16 @@ bool nsAccUtils::IsDOMAttrTrue(const LocalAccessible* aAccessible,
                                eCaseMatters);
 }
 
-LocalAccessible* nsAccUtils::TableFor(LocalAccessible* aRow) {
+Accessible* nsAccUtils::TableFor(Accessible* aRow) {
   if (aRow) {
-    LocalAccessible* table = aRow->LocalParent();
+    Accessible* table = aRow->Parent();
     if (table) {
       roles::Role tableRole = table->Role();
       const nsRoleMapEntry* roleMapEntry = table->ARIARoleMap();
       if (tableRole == roles::GROUPING ||  // if there's a rowgroup.
           (table->IsGenericHyperText() && !roleMapEntry &&
            !table->IsTable())) {  // or there is a wrapping text container
-        table = table->LocalParent();
+        table = table->Parent();
         if (table) tableRole = table->Role();
       }
 
@@ -225,6 +226,11 @@ LocalAccessible* nsAccUtils::TableFor(LocalAccessible* aRow) {
   }
 
   return nullptr;
+}
+
+LocalAccessible* nsAccUtils::TableFor(LocalAccessible* aRow) {
+  Accessible* table = TableFor(static_cast<Accessible*>(aRow));
+  return table ? table->AsLocal() : nullptr;
 }
 
 HyperTextAccessible* nsAccUtils::GetTextContainer(nsINode* aNode) {
@@ -451,4 +457,29 @@ bool nsAccUtils::IsARIALive(const LocalAccessible* aAccessible) {
   }
 
   return false;
+}
+
+Accessible* nsAccUtils::DocumentFor(Accessible* aAcc) {
+  if (!aAcc) {
+    return nullptr;
+  }
+  if (LocalAccessible* localAcc = aAcc->AsLocal()) {
+    return localAcc->Document();
+  }
+  return aAcc->AsRemote()->Document();
+}
+
+Accessible* nsAccUtils::GetAccessibleByID(Accessible* aDoc, uint64_t aID) {
+  if (!aDoc) {
+    return nullptr;
+  }
+  if (LocalAccessible* localAcc = aDoc->AsLocal()) {
+    if (DocAccessible* doc = localAcc->AsDoc()) {
+      return doc->GetAccessibleByUniqueID(
+          reinterpret_cast<void*>(static_cast<uintptr_t>(aID)));
+    }
+  } else if (DocAccessibleParent* doc = aDoc->AsRemote()->AsDoc()) {
+    return doc->GetAccessible(aID);
+  }
+  return nullptr;
 }

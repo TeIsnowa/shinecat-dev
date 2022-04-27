@@ -13,7 +13,7 @@
 #include "HttpLog.h"
 #include "HTTPSRecordResolver.h"
 #include "NSSErrorsService.h"
-#include "TunnelUtils.h"
+#include "Http2ConnectTransaction.h"
 #include "base/basictypes.h"
 #include "mozilla/Components.h"
 #include "mozilla/ScopeExit.h"
@@ -2169,6 +2169,27 @@ nsresult nsHttpTransaction::HandleContentStart() {
         mNoContent = true;
         LOG(("this response should not contain a body.\n"));
         break;
+      case 408:
+        LOG(("408 Server Timeouts"));
+
+        if (mConnection->Version() >= HttpVersion::v2_0) {
+          mForceRestart = true;
+          return NS_ERROR_NET_RESET;
+        }
+
+        // If this error could be due to a persistent connection
+        // reuse then we pass an error code of NS_ERROR_NET_RESET
+        // to trigger the transaction 'restart' mechanism.  We
+        // tell it to reset its response headers so that it will
+        // be ready to receive the new response.
+        LOG(("408 Server Timeouts now=%d lastWrite=%d", PR_IntervalNow(),
+             mConnection->LastWriteTime()));
+        if ((PR_IntervalNow() - mConnection->LastWriteTime()) >=
+            PR_MillisecondsToInterval(1000)) {
+          mForceRestart = true;
+          return NS_ERROR_NET_RESET;
+        }
+        break;
       case 421:
         LOG(("Misdirected Request.\n"));
         gHttpHandler->ClearHostMapping(mConnInfo);
@@ -2985,7 +3006,7 @@ bool nsHttpTransaction::IsWebsocketUpgrade() {
 }
 
 void nsHttpTransaction::SetH2WSTransaction(
-    SpdyConnectTransaction* aH2WSTransaction) {
+    Http2ConnectTransaction* aH2WSTransaction) {
   MOZ_ASSERT(OnSocketThread());
 
   mH2WSTransaction = aH2WSTransaction;

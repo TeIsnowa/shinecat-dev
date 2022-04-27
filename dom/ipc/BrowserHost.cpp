@@ -56,7 +56,7 @@ nsILoadContext* BrowserHost::GetLoadContext() const {
 bool BrowserHost::CanRecv() const { return mRoot && mRoot->CanRecv(); }
 
 a11y::DocAccessibleParent* BrowserHost::GetTopLevelDocAccessible() const {
-  return mRoot->GetTopLevelDocAccessible();
+  return mRoot ? mRoot->GetTopLevelDocAccessible() : nullptr;
 }
 
 void BrowserHost::LoadURL(nsDocShellLoadState* aLoadState) {
@@ -119,8 +119,11 @@ BrowserHost::SetRenderLayers(bool aRenderLayers) {
   if (!mRoot) {
     return NS_OK;
   }
-  ProcessPriorityManager::ActivityChanged(GetBrowsingContext()->Canonical(),
-                                          aRenderLayers);
+
+  bool priorityHint;
+  GetPriorityHint(&priorityHint);
+  ProcessPriorityManager::BrowserPriorityChanged(
+      GetBrowsingContext()->Canonical(), priorityHint || aRenderLayers);
   mRoot->SetRenderLayers(aRenderLayers);
   return NS_OK;
 }
@@ -133,6 +136,30 @@ BrowserHost::GetHasLayers(bool* aHasLayers) {
     return NS_OK;
   }
   *aHasLayers = mRoot->GetHasLayers();
+  return NS_OK;
+}
+
+/* attribute boolean priorityHint; */
+NS_IMETHODIMP
+BrowserHost::SetPriorityHint(bool aPriorityHint) {
+  if (!mRoot) {
+    return NS_OK;
+  }
+  bool renderLayers;
+  GetRenderLayers(&renderLayers);
+  ProcessPriorityManager::BrowserPriorityChanged(
+      GetBrowsingContext()->Canonical(), aPriorityHint || renderLayers);
+  mRoot->SetPriorityHint(aPriorityHint);
+  return NS_OK;
+}
+
+NS_IMETHODIMP
+BrowserHost::GetPriorityHint(bool* aPriorityHint) {
+  if (!mRoot) {
+    *aPriorityHint = false;
+    return NS_OK;
+  }
+  *aPriorityHint = mRoot->GetPriorityHint();
   return NS_OK;
 }
 
@@ -154,8 +181,9 @@ BrowserHost::Deprioritize(void) {
   if (!mRoot) {
     return NS_OK;
   }
-  ProcessPriorityManager::ActivityChanged(GetBrowsingContext()->Canonical(),
-                                          /* aIsActive = */ false);
+  ProcessPriorityManager::BrowserPriorityChanged(
+      GetBrowsingContext()->Canonical(),
+      /* aPriority = */ false);
   return NS_OK;
 }
 

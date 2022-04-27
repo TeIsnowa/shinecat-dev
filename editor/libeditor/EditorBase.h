@@ -7,10 +7,12 @@
 #define mozilla_EditorBase_h
 
 #include "mozilla/intl/BidiEmbeddingLevel.h"
-#include "mozilla/Assertions.h"          // for MOZ_ASSERT, etc.
-#include "mozilla/EditAction.h"          // for EditAction and EditSubAction
-#include "mozilla/EditorDOMPoint.h"      // for EditorDOMPoint
+#include "mozilla/Assertions.h"      // for MOZ_ASSERT, etc.
+#include "mozilla/EditAction.h"      // for EditAction and EditSubAction
+#include "mozilla/EditorDOMPoint.h"  // for EditorDOMPoint
+#include "mozilla/EditorForwards.h"
 #include "mozilla/EventForwards.h"       // for InputEventTargetRanges
+#include "mozilla/Likely.h"              // for MOZ_UNLIKELY, MOZ_LIKELY
 #include "mozilla/Maybe.h"               // for Maybe
 #include "mozilla/OwningNonNull.h"       // for OwningNonNull
 #include "mozilla/TypeInState.h"         // for PropItem, StyleCache
@@ -60,48 +62,17 @@ class nsRange;
 
 namespace mozilla {
 class AlignStateAtSelection;
-class AutoRangeArray;
-class AutoTopLevelEditSubActionNotifier;
 class AutoTransactionsConserveSelection;
 class AutoUpdateViewBatch;
-class ChangeAttributeTransaction;
-class CompositionTransaction;
-class CreateElementTransaction;
-class CSSEditUtils;
-class DeleteNodeTransaction;
-class DeleteRangeTransaction;
-class DeleteTextTransaction;
-class EditActionResult;
-class EditAggregateTransaction;
-class EditorEventListener;
-class EditTransactionBase;
 class ErrorResult;
-class HTMLEditor;
-class HTMLEditUtils;
 class IMEContentObserver;
-class InsertNodeTransaction;
-class InsertTextTransaction;
-class JoinNodeTransaction;
 class ListElementSelectionState;
 class ListItemElementSelectionState;
 class ParagraphStateAtSelection;
-class PlaceholderTransaction;
 class PresShell;
-class ReplaceTextTransaction;
-class SplitNodeResult;
-class SplitNodeTransaction;
 class TextComposition;
-class TextEditor;
 class TextInputListener;
 class TextServicesDocument;
-class TypeInState;
-class WhiteSpaceVisibilityKeeper;
-
-enum class SplitNodeDirection;  // Declrared in HTMLEditor.h
-
-template <typename NodeType>
-class CreateNodeResultBase;
-typedef CreateNodeResultBase<dom::Element> CreateElementResult;
 
 namespace dom {
 class AbstractRange;
@@ -138,10 +109,11 @@ class EditorBase : public nsIEditor,
    *       method to edit the DOM tree, you can make your new method public.
    ****************************************************************************/
 
-  typedef dom::Document Document;
-  typedef dom::Element Element;
-  typedef dom::Selection Selection;
-  typedef dom::Text Text;
+  using Document = dom::Document;
+  using Element = dom::Element;
+  using InterlinePosition = dom::Selection::InterlinePosition;
+  using Selection = dom::Selection;
+  using Text = dom::Text;
 
   enum class EditorType { Text, HTML };
 
@@ -1250,11 +1222,8 @@ class EditorBase : public nsIEditor,
         case EditSubAction::eComputeTextToOutput:
         case EditSubAction::eCreatePaddingBRElementForEmptyEditor:
         case EditSubAction::eNone:
-          MOZ_ASSERT(aDirection == eNone);
-          mDirectionOfTopLevelEditSubAction = eNone;
-          break;
         case EditSubAction::eReplaceHeadWithHTMLSource:
-          // NOTE: Not used with AutoTopLevelEditSubActionNotifier.
+          MOZ_ASSERT(aDirection == eNone);
           mDirectionOfTopLevelEditSubAction = eNone;
           break;
         case EditSubAction::eDeleteNode:
@@ -1304,17 +1273,7 @@ class EditorBase : public nsIEditor,
       return mParentData ? mParentData->RangeUpdaterRef() : mRangeUpdater;
     }
 
-    void UpdateSelectionCache(Selection& aSelection) {
-      MOZ_ASSERT(aSelection.GetType() == SelectionType::eNormal);
-
-      AutoEditActionDataSetter* actionData = this;
-      while (actionData) {
-        if (actionData->mSelection) {
-          actionData->mSelection = &aSelection;
-        }
-        actionData = actionData->mParentData;
-      }
-    }
+    void UpdateSelectionCache(Selection& aSelection);
 
    private:
     bool IsBeforeInputEventEnabled() const;
@@ -1378,6 +1337,7 @@ class EditorBase : public nsIEditor,
 
     EditorBase& mEditorBase;
     RefPtr<Selection> mSelection;
+    nsTArray<OwningNonNull<Selection>> mRetiredSelections;
     nsCOMPtr<nsIPrincipal> mPrincipal;
     // EditAction may be nested, for example, a command may be executed
     // from mutation event listener which is run while editor changes
@@ -1638,12 +1598,14 @@ class EditorBase : public nsIEditor,
   }
 
   /**
-   * GetCompositionStartPoint() and GetCompositionEndPoint() returns start and
-   * end point of composition string if there is.  Otherwise, returns non-set
-   * DOM point.
+   * GetFirstIMESelectionStartPoint() and GetLastIMESelectionEndPoint() returns
+   * start of first IME selection range or end of last IME selection range if
+   * there is.  Otherwise, returns non-set DOM point.
    */
-  EditorRawDOMPoint GetCompositionStartPoint() const;
-  EditorRawDOMPoint GetCompositionEndPoint() const;
+  template <typename EditorDOMPointType>
+  EditorDOMPointType GetFirstIMESelectionStartPoint() const;
+  template <typename EditorDOMPointType>
+  EditorDOMPointType GetLastIMESelectionEndPoint() const;
 
   /**
    * IsSelectionRangeContainerNotContent() returns true if one of container
@@ -1680,21 +1642,17 @@ class EditorBase : public nsIEditor,
    *
    * @param aDocument       The document of this editor.
    * @param aStringToInsert The string to insert.
-   * @param aPointToInser   The point to insert aStringToInsert.
+   * @param aPointToInsert  The point to insert aStringToInsert.
    *                        Must be valid DOM point.
-   * @param aPointAfterInsertedString
-   *                        The point after inserted aStringToInsert.
-   *                        So, when this method actually inserts string,
-   *                        this is set to a point in the text node.
-   *                        Otherwise, this may be set to aPointToInsert.
-   * @return                When this succeeds to insert the string or
-   *                        does nothing during composition, returns NS_OK.
-   *                        Otherwise, an error code.
+   * @return                If succeeded, returns the point after inserted
+   *                        aStringToInsert. So, when this method actually
+   *                        inserts string, returns a point in the text node.
+   *                        Otherwise, returns aPointToInsert.
    */
-  MOZ_CAN_RUN_SCRIPT virtual nsresult InsertTextWithTransaction(
-      Document& aDocument, const nsAString& aStringToInsert,
-      const EditorRawDOMPoint& aPointToInsert,
-      EditorRawDOMPoint* aPointAfterInsertedString = nullptr);
+  [[nodiscard]] MOZ_CAN_RUN_SCRIPT virtual Result<EditorDOMPoint, nsresult>
+  InsertTextWithTransaction(Document& aDocument,
+                            const nsAString& aStringToInsert,
+                            const EditorDOMPoint& aPointToInsert);
 
   /**
    * InsertTextIntoTextNodeWithTransaction() inserts aStringToInsert into
@@ -1870,16 +1828,74 @@ class EditorBase : public nsIEditor,
    */
   bool ShouldHandleIMEComposition() const;
 
-  static EditorRawDOMPoint GetStartPoint(const Selection& aSelection);
-  static EditorRawDOMPoint GetEndPoint(const Selection& aSelection);
+  template <typename EditorDOMPointType>
+  EditorDOMPointType GetFirstSelectionStartPoint() const;
+  template <typename EditorDOMPointType>
+  EditorDOMPointType GetFirstSelectionEndPoint() const;
 
   static nsresult GetEndChildNode(const Selection& aSelection,
                                   nsIContent** aEndNode);
 
+  template <typename PT, typename CT>
+  [[nodiscard]] MOZ_CAN_RUN_SCRIPT nsresult
+  CollapseSelectionTo(const EditorDOMPointBase<PT, CT>& aPoint) const {
+    // We don't need to throw exception directly for a failure of updating
+    // selection.  Therefore, let's use IgnoredErrorResult for the performance.
+    IgnoredErrorResult error;
+    CollapseSelectionTo(aPoint, error);
+    return error.StealNSResult();
+  }
+
+  template <typename PT, typename CT>
+  MOZ_CAN_RUN_SCRIPT void CollapseSelectionTo(
+      const EditorDOMPointBase<PT, CT>& aPoint, ErrorResult& aRv) const {
+    MOZ_ASSERT(IsEditActionDataAvailable());
+    MOZ_ASSERT(!aRv.Failed());
+
+    if (aPoint.GetInterlinePosition() != InterlinePosition::Undefined) {
+      if (MOZ_UNLIKELY(NS_FAILED(SelectionRef().SetInterlinePosition(
+              aPoint.GetInterlinePosition())))) {
+        NS_WARNING("Selection::SetInterlinePosition() failed");
+        aRv.Throw(NS_ERROR_FAILURE);
+        return;
+      }
+    }
+
+    SelectionRef().CollapseInLimiter(aPoint, aRv);
+    if (MOZ_UNLIKELY(Destroyed())) {
+      NS_WARNING("Selection::CollapseInLimiter() caused destroying the editor");
+      aRv.Throw(NS_ERROR_EDITOR_DESTROYED);
+      return;
+    }
+    NS_WARNING_ASSERTION(!aRv.Failed(),
+                         "Selection::CollapseInLimiter() failed");
+  }
+
+  [[nodiscard]] MOZ_CAN_RUN_SCRIPT nsresult
+  CollapseSelectionToStartOf(nsINode& aNode) const {
+    return CollapseSelectionTo(EditorRawDOMPoint(&aNode, 0u));
+  }
+
+  MOZ_CAN_RUN_SCRIPT void CollapseSelectionToStartOf(nsINode& aNode,
+                                                     ErrorResult& aRv) const {
+    CollapseSelectionTo(EditorRawDOMPoint(&aNode, 0u), aRv);
+  }
+
+  [[nodiscard]] MOZ_CAN_RUN_SCRIPT nsresult
+  CollapseSelectionToEndOf(nsINode& aNode) const {
+    return CollapseSelectionTo(EditorRawDOMPoint::AtEndOf(aNode));
+  }
+
+  MOZ_CAN_RUN_SCRIPT void CollapseSelectionToEndOf(nsINode& aNode,
+                                                   ErrorResult& aRv) const {
+    CollapseSelectionTo(EditorRawDOMPoint::AtEndOf(aNode), aRv);
+  }
+
   /**
-   * CollapseSelectionToEnd() collapses the selection to the end of the editor.
+   * CollapseSelectionToEnd() collapses the selection to the last leaf content
+   * of the editor.
    */
-  MOZ_CAN_RUN_SCRIPT_BOUNDARY nsresult CollapseSelectionToEnd() const;
+  MOZ_CAN_RUN_SCRIPT nsresult CollapseSelectionToEndOfLastLeafNode() const;
 
   /**
    * AllowsTransactionsToChangeSelection() returns true if editor allows any
@@ -1924,8 +1940,9 @@ class EditorBase : public nsIEditor,
    * @return            Better insertion point if there is.  If not returns
    *                    same point as aPoint.
    */
-  EditorRawDOMPoint FindBetterInsertionPoint(
-      const EditorRawDOMPoint& aPoint) const;
+  template <typename EditorDOMPointType>
+  EditorDOMPointType FindBetterInsertionPoint(
+      const EditorDOMPointType& aPoint) const;
 
   /**
    * HideCaret() hides caret with nsCaret::AddForceHide() or may show carent
@@ -2126,13 +2143,14 @@ class EditorBase : public nsIEditor,
    * manager batches.
    */
   MOZ_CAN_RUN_SCRIPT_BOUNDARY void BeginPlaceholderTransaction(
-      nsStaticAtom& aTransactionName);
+      nsStaticAtom& aTransactionName, const char* aRequesterFuncName);
   enum class ScrollSelectionIntoView { No, Yes };
   MOZ_CAN_RUN_SCRIPT_BOUNDARY void EndPlaceholderTransaction(
-      ScrollSelectionIntoView aScrollSelectionIntoView);
+      ScrollSelectionIntoView aScrollSelectionIntoView,
+      const char* aRequesterFuncName);
 
-  void BeginUpdateViewBatch();
-  MOZ_CAN_RUN_SCRIPT void EndUpdateViewBatch();
+  void BeginUpdateViewBatch(const char* aRequesterFuncName);
+  MOZ_CAN_RUN_SCRIPT void EndUpdateViewBatch(const char* aRequesterFuncName);
 
   /**
    * Used by HTMLEditor::AutoTransactionBatch, nsIEditor::BeginTransaction
@@ -2142,8 +2160,10 @@ class EditorBase : public nsIEditor,
    * XXX What's the difference with PlaceholderTransaction? Should we always
    *     use it instead?
    */
-  MOZ_CAN_RUN_SCRIPT void BeginTransactionInternal();
-  MOZ_CAN_RUN_SCRIPT void EndTransactionInternal();
+  MOZ_CAN_RUN_SCRIPT void BeginTransactionInternal(
+      const char* aRequesterFuncName);
+  MOZ_CAN_RUN_SCRIPT void EndTransactionInternal(
+      const char* aRequesterFuncName);
 
  protected:  // Shouldn't be used by friend classes
   /**
@@ -2585,28 +2605,41 @@ class EditorBase : public nsIEditor,
    */
   class MOZ_RAII AutoPlaceholderBatch final {
    public:
+    /**
+     * @param aRequesterFuncName function name which wants to end the batch.
+     * This won't be stored nor exposed to selection listeners etc, used only
+     * for logging. This MUST be alive when the destructor runs.
+     */
     AutoPlaceholderBatch(EditorBase& aEditorBase,
-                         ScrollSelectionIntoView aScrollSelectionIntoView)
+                         ScrollSelectionIntoView aScrollSelectionIntoView,
+                         const char* aRequesterFuncName)
         : mEditorBase(aEditorBase),
-          mScrollSelectionIntoView(aScrollSelectionIntoView) {
-      mEditorBase->BeginPlaceholderTransaction(*nsGkAtoms::_empty);
+          mScrollSelectionIntoView(aScrollSelectionIntoView),
+          mRequesterFuncName(aRequesterFuncName) {
+      mEditorBase->BeginPlaceholderTransaction(*nsGkAtoms::_empty,
+                                               mRequesterFuncName);
     }
 
     AutoPlaceholderBatch(EditorBase& aEditorBase,
                          nsStaticAtom& aTransactionName,
-                         ScrollSelectionIntoView aScrollSelectionIntoView)
+                         ScrollSelectionIntoView aScrollSelectionIntoView,
+                         const char* aRequesterFuncName)
         : mEditorBase(aEditorBase),
-          mScrollSelectionIntoView(aScrollSelectionIntoView) {
-      mEditorBase->BeginPlaceholderTransaction(aTransactionName);
+          mScrollSelectionIntoView(aScrollSelectionIntoView),
+          mRequesterFuncName(aRequesterFuncName) {
+      mEditorBase->BeginPlaceholderTransaction(aTransactionName,
+                                               mRequesterFuncName);
     }
 
     ~AutoPlaceholderBatch() {
-      mEditorBase->EndPlaceholderTransaction(mScrollSelectionIntoView);
+      mEditorBase->EndPlaceholderTransaction(mScrollSelectionIntoView,
+                                             mRequesterFuncName);
     }
 
    protected:
-    OwningNonNull<EditorBase> mEditorBase;
-    ScrollSelectionIntoView mScrollSelectionIntoView;
+    const OwningNonNull<EditorBase> mEditorBase;
+    const ScrollSelectionIntoView mScrollSelectionIntoView;
+    const char* const mRequesterFuncName;
   };
 
   /**
@@ -2673,17 +2706,24 @@ class EditorBase : public nsIEditor,
    */
   class MOZ_RAII AutoUpdateViewBatch final {
    public:
-    MOZ_CAN_RUN_SCRIPT explicit AutoUpdateViewBatch(EditorBase& aEditorBase)
-        : mEditorBase(aEditorBase) {
-      mEditorBase.BeginUpdateViewBatch();
+    /**
+     * @param aRequesterFuncName function name which wants to end the batch.
+     * This won't be stored nor exposed to selection listeners etc, used only
+     * for logging. This MUST be alive when the destructor runs.
+     */
+    MOZ_CAN_RUN_SCRIPT explicit AutoUpdateViewBatch(
+        EditorBase& aEditorBase, const char* aRequesterFuncName)
+        : mEditorBase(aEditorBase), mRequesterFuncName(aRequesterFuncName) {
+      mEditorBase.BeginUpdateViewBatch(mRequesterFuncName);
     }
 
     MOZ_CAN_RUN_SCRIPT ~AutoUpdateViewBatch() {
-      MOZ_KnownLive(mEditorBase).EndUpdateViewBatch();
+      MOZ_KnownLive(mEditorBase).EndUpdateViewBatch(mRequesterFuncName);
     }
 
    protected:
     EditorBase& mEditorBase;
+    const char* const mRequesterFuncName;
   };
 
  protected:
@@ -2777,7 +2817,6 @@ class EditorBase : public nsIEditor,
   friend class AlignStateAtSelection;
   friend class AutoRangeArray;
   friend class CompositionTransaction;
-  friend class CreateElementTransaction;
   friend class CSSEditUtils;
   friend class DeleteNodeTransaction;
   friend class DeleteRangeTransaction;
@@ -2785,7 +2824,7 @@ class EditorBase : public nsIEditor,
   friend class HTMLEditUtils;
   friend class InsertNodeTransaction;
   friend class InsertTextTransaction;
-  friend class JoinNodeTransaction;
+  friend class JoinNodesTransaction;
   friend class ListElementSelectionState;
   friend class ListItemElementSelectionState;
   friend class ParagraphStateAtSelection;

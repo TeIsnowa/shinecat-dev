@@ -24,6 +24,8 @@ class AccGroupInfo;
 class HyperTextAccessibleBase;
 class LocalAccessible;
 class RemoteAccessible;
+class TableAccessibleBase;
+class TableCellAccessibleBase;
 
 /**
  * Name type flags.
@@ -74,6 +76,13 @@ class Accessible {
              uint8_t aRoleMapEntryIndex);
 
  public:
+  /**
+   * Return an id for this Accessible which is unique within the document.
+   * Use nsAccUtils::GetAccessibleByID to retrieve an Accessible given an id
+   * returned from this method.
+   */
+  virtual uint64_t ID() const = 0;
+
   virtual Accessible* Parent() const = 0;
 
   virtual role Role() const = 0;
@@ -145,6 +154,11 @@ class Accessible {
    * Return group position (level, position in set and set size).
    */
   virtual GroupPos GroupPosition();
+
+  /**
+   * Return embedded accessible children count.
+   */
+  virtual uint32_t EmbeddedChildCount() = 0;
 
   /**
    * Return embedded accessible child at the given index.
@@ -220,9 +234,17 @@ class Accessible {
 
   virtual already_AddRefed<nsAtom> DisplayStyle() const = 0;
 
+  virtual Maybe<float> Opacity() const = 0;
+
   // Methods that interact with content.
 
   virtual void TakeFocus() const = 0;
+
+  /**
+   * Scroll the accessible into view.
+   */
+  MOZ_CAN_RUN_SCRIPT
+  virtual void ScrollTo(uint32_t aHow) const = 0;
 
   /**
    * Return tag name of associated DOM node.
@@ -233,6 +255,11 @@ class Accessible {
    * Return a landmark role if applied.
    */
   virtual nsAtom* LandmarkRole() const;
+
+  /**
+   * Return the id of the dom node this accessible represents.
+   */
+  virtual void DOMNodeID(nsString& aID) const = 0;
 
   //////////////////////////////////////////////////////////////////////////////
   // ActionAccessible
@@ -422,6 +449,9 @@ class Accessible {
   LocalAccessible* AsLocal();
 
   virtual HyperTextAccessibleBase* AsHyperTextBase() { return nullptr; }
+
+  virtual TableAccessibleBase* AsTableBase() { return nullptr; }
+  virtual TableCellAccessibleBase* AsTableCellBase() { return nullptr; }
 
   /**
    * Return the localized string for the given key.

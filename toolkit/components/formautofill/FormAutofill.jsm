@@ -91,8 +91,13 @@ var FormAutofill = {
       if (!FormAutofill.supportRTL && Services.locale.isAppLocaleRTL) {
         return false;
       }
-      let region = Services.prefs.getCharPref(BROWSER_SEARCH_REGION_PREF, "");
-
+      // TODO: Bug 1747284. Use Region.home instead of reading "browser.serach.region"
+      // by default. However, Region.home doesn't observe preference change at this point,
+      // we should also fix that issue.
+      let region = Services.prefs.getCharPref(
+        BROWSER_SEARCH_REGION_PREF,
+        this.DEFAULT_REGION
+      );
       return supportedCountries.includes(region);
     }
     return false;
@@ -150,10 +155,9 @@ var FormAutofill = {
     scope.debug = debug;
 
     XPCOMUtils.defineLazyGetter(scope, "log", () => {
-      let ConsoleAPI = ChromeUtils.import(
-        "resource://gre/modules/Console.jsm",
-        {}
-      ).ConsoleAPI;
+      let { ConsoleAPI } = ChromeUtils.import(
+        "resource://gre/modules/Console.jsm"
+      );
       return new ConsoleAPI({
         maxLogLevelPref: "extensions.formautofill.loglevel",
         prefix: logPrefix,

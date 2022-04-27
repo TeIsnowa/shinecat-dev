@@ -291,6 +291,13 @@ void ClientWebGLContext::Event_webglcontextrestored() const {
     return;
   }
 
+  if (!requestSize.x) {
+    requestSize.x = 1;
+  }
+  if (!requestSize.y) {
+    requestSize.y = 1;
+  }
+
   const auto mutThis = const_cast<ClientWebGLContext*>(
       this);  // TODO: Make context loss non-mutable.
   if (!mutThis->CreateHostContext(requestSize)) {
@@ -963,6 +970,7 @@ RefPtr<gfx::SourceSurface> ClientWebGLContext::GetFrontBufferSnapshot(
 
   const auto& surfSize = res.surfSize;
   const webgl::RaiiShmem shmem{child, res.shmem.ref()};
+  if (!shmem) return nullptr;
   const auto& shmemBytes = shmem.ByteRange();
   if (!surfSize.x) return nullptr;  // Zero means failure.
 
@@ -1061,7 +1069,7 @@ RefPtr<gfx::DataSourceSurface> ClientWebGLContext::BackBufferSnapshot() {
 
     const auto desc = webgl::ReadPixelsDesc{{0, 0}, size};
     const auto range = Range<uint8_t>(map.GetData(), stride * size.y);
-    DoReadPixels(desc, range);
+    if (!DoReadPixels(desc, range)) return nullptr;
 
     const auto begin = range.begin().get();
 
@@ -3014,15 +3022,13 @@ Maybe<webgl::ErrorInfo> CheckBindBufferRange(
         return fnSome(LOCAL_GL_INVALID_VALUE, info);
       }
 
-      if (isBuffer) {
-        if (offset % 4 != 0 || size % 4 != 0) {
-          const auto info =
-              nsPrintfCString("`offset` (%" PRIu64 ") and `size` (%" PRIu64
-                              ") must both be aligned to 4 for"
-                              " TRANSFORM_FEEDBACK_BUFFER.",
-                              offset, size);
-          return fnSome(LOCAL_GL_INVALID_VALUE, info);
-        }
+      if (offset % 4 != 0 || size % 4 != 0) {
+        const auto info =
+            nsPrintfCString("`offset` (%" PRIu64 ") and `size` (%" PRIu64
+                            ") must both be aligned to 4 for"
+                            " TRANSFORM_FEEDBACK_BUFFER.",
+                            offset, size);
+        return fnSome(LOCAL_GL_INVALID_VALUE, info);
       }
       break;
 
@@ -3034,15 +3040,13 @@ Maybe<webgl::ErrorInfo> CheckBindBufferRange(
         return fnSome(LOCAL_GL_INVALID_VALUE, info);
       }
 
-      if (isBuffer) {
-        if (offset % limits.uniformBufferOffsetAlignment != 0) {
-          const auto info =
-              nsPrintfCString("`offset` (%" PRIu64
-                              ") must be aligned to "
-                              "UNIFORM_BUFFER_OFFSET_ALIGNMENT (%u).",
-                              offset, limits.uniformBufferOffsetAlignment);
-          return fnSome(LOCAL_GL_INVALID_VALUE, info);
-        }
+      if (offset % limits.uniformBufferOffsetAlignment != 0) {
+        const auto info =
+            nsPrintfCString("`offset` (%" PRIu64
+                            ") must be aligned to "
+                            "UNIFORM_BUFFER_OFFSET_ALIGNMENT (%u).",
+                            offset, limits.uniformBufferOffsetAlignment);
+        return fnSome(LOCAL_GL_INVALID_VALUE, info);
       }
       break;
 
@@ -3209,6 +3213,10 @@ void ClientWebGLContext::GetBufferSubData(GLenum target, GLintptr srcByteOffset,
     return;
   }
   const webgl::RaiiShmem shmem{child, rawShmem};
+  if (!shmem) {
+    EnqueueError(LOCAL_GL_OUT_OF_MEMORY, "Failed to map in sub data buffer.");
+    return;
+  }
 
   const auto shmemView = shmem.ByteRange();
   MOZ_RELEASE_ASSERT(shmemView.length() == 1 + destView.length());
@@ -3947,10 +3955,6 @@ Maybe<webgl::TexUnpackBlobDesc> FromImageBitmap(
     GLenum target, Maybe<uvec3> size, const dom::ImageBitmap& imageBitmap,
     ErrorResult* const out_rv);
 
-webgl::TexUnpackBlobDesc FromImageData(GLenum target, Maybe<uvec3> size,
-                                       const dom::ImageData& imageData,
-                                       dom::Uint8ClampedArray* const scopedArr);
-
 Maybe<webgl::TexUnpackBlobDesc> FromOffscreenCanvas(
     const ClientWebGLContext&, GLenum target, Maybe<uvec3> size,
     const dom::OffscreenCanvas& src, ErrorResult* const out_error);
@@ -4067,8 +4071,51 @@ void ClientWebGLContext::TexImage(uint8_t funcDims, GLenum imageTarget,
     }
 
     if (src.mImageData) {
-      return Some(webgl::FromImageData(imageTarget, size, *(src.mImageData),
-                                       &scopedArr));
+      const auto& imageData = *src.mImageData;
+      MOZ_RELEASE_ASSERT(scopedArr.Init(imageData.GetDataObject()));
+      scopedArr.ComputeState();
+      const auto dataSize = scopedArr.Length();
+      const auto data = reinterpret_cast<uint8_t*>(scopedArr.Data());
+      if (!data) {
+        // Neutered, e.g. via Transfer
+        EnqueueError(LOCAL_GL_INVALID_VALUE,
+                     "ImageData.data.buffer is Detached. (Maybe you Transfered "
+                     "it to a Worker?");
+        return {};
+      }
+
+      // -
+
+      const gfx::IntSize imageSize(imageData.Width(), imageData.Height());
+      const auto sizeFromDims =
+          CheckedInt<size_t>(imageSize.width) * imageSize.height * 4;
+      MOZ_RELEASE_ASSERT(sizeFromDims.isValid() &&
+                         sizeFromDims.value() == dataSize);
+
+      const RefPtr<gfx::DataSourceSurface> surf =
+          gfx::Factory::CreateWrappingDataSourceSurface(
+              data, imageSize.width * 4, imageSize,
+              gfx::SurfaceFormat::R8G8B8A8);
+      MOZ_ASSERT(surf);
+
+      // -
+
+      const auto imageUSize = *uvec2::FromSize(imageSize);
+      const auto concreteSize =
+          size.valueOr(uvec3{imageUSize.x, imageUSize.y, 1});
+
+      // WhatWG "HTML Living Standard" (30 October 2015):
+      // "The getImageData(sx, sy, sw, sh) method [...] Pixels must be returned
+      // as non-premultiplied alpha values."
+      return Some(webgl::TexUnpackBlobDesc{imageTarget,
+                                           concreteSize,
+                                           gfxAlphaType::NonPremult,
+                                           {},
+                                           {},
+                                           Some(imageUSize),
+                                           nullptr,
+                                           {},
+                                           surf});
     }
 
     if (src.mOffscreenCanvas) {
@@ -4752,18 +4799,20 @@ void ClientWebGLContext::ReadPixels(GLint x, GLint y, GLsizei width,
                                           {format, type},
                                           state.mPixelPackState};
   const auto range = Range<uint8_t>(bytes, byteLen);
-  DoReadPixels(desc, range);
+  if (!DoReadPixels(desc, range)) {
+    return;
+  }
 }
 
-void ClientWebGLContext::DoReadPixels(const webgl::ReadPixelsDesc& desc,
+bool ClientWebGLContext::DoReadPixels(const webgl::ReadPixelsDesc& desc,
                                       const Range<uint8_t> dest) const {
   const auto notLost =
       mNotLost;  // Hold a strong-ref to prevent LoseContext=>UAF.
-  if (!notLost) return;
+  if (!notLost) return false;
   const auto& inProcess = notLost->inProcess;
   if (inProcess) {
     inProcess->ReadPixelsInto(desc, dest);
-    return;
+    return true;
   }
   const auto& child = notLost->outOfProcess;
   child->FlushPendingCmds();
@@ -4771,16 +4820,21 @@ void ClientWebGLContext::DoReadPixels(const webgl::ReadPixelsDesc& desc,
   if (!child->SendReadPixels(desc, dest.length(), &res)) {
     res = {};
   }
-  if (!res.byteStride) return;
+  if (!res.byteStride) return false;
   const auto& byteStride = res.byteStride;
   const auto& subrect = res.subrect;
   const webgl::RaiiShmem shmem{child, res.shmem};
+  if (!shmem) {
+    EnqueueError(LOCAL_GL_OUT_OF_MEMORY, "Failed to map in back buffer.");
+    return false;
+  }
+
   const auto& shmemBytes = shmem.ByteRange();
 
   uint8_t bpp;
   if (!GetBytesPerPixel(desc.pi, &bpp)) {
     MOZ_ASSERT(false);
-    return;
+    return false;
   }
 
   const auto& packing = desc.packState;
@@ -4805,6 +4859,8 @@ void ClientWebGLContext::DoReadPixels(const webgl::ReadPixelsDesc& desc,
     }
     Memcpy(destItr, srcItr, xByteSize);
   }
+
+  return true;
 }
 
 bool ClientWebGLContext::ReadPixels_SharedPrecheck(
@@ -5452,7 +5508,10 @@ uint32_t ClientWebGLContext::GetPrincipalHashValue() const {
     return mCanvasElement->NodePrincipal()->GetHashValue();
   }
   if (mOffscreenCanvas) {
-    return mOffscreenCanvas->GetOwnerGlobal()->GetPrincipalHashValue();
+    nsIGlobalObject* global = mOffscreenCanvas->GetOwnerGlobal();
+    if (global) {
+      return global->GetPrincipalHashValue();
+    }
   }
   return 0;
 }

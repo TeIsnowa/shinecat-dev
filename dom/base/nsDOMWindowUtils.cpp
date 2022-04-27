@@ -26,6 +26,7 @@
 #include "mozilla/dom/Event.h"
 #include "mozilla/dom/Touch.h"
 #include "mozilla/dom/UserActivation.h"
+#include "mozilla/EventStateManager.h"
 #include "mozilla/PendingAnimationTracker.h"
 #include "mozilla/ServoStyleSet.h"
 #include "mozilla/SharedStyleSheetCache.h"
@@ -74,9 +75,11 @@
 #include "mozilla/dom/DOMRect.h"
 #include <algorithm>
 
-#if defined(MOZ_X11) && defined(MOZ_WIDGET_GTK)
+#if defined(MOZ_WIDGET_GTK)
 #  include <gdk/gdk.h>
-#  include <gdk/gdkx.h>
+#  if defined(MOZ_X11)
+#    include <gdk/gdkx.h>
+#  endif
 #endif
 
 #include "Layers.h"
@@ -1181,8 +1184,8 @@ nsDOMWindowUtils::SendNativeTouchpadDoubleTap(int32_t aScreenX,
 NS_IMETHODIMP
 nsDOMWindowUtils::SendNativeTouchpadPan(uint32_t aEventPhase, int32_t aScreenX,
                                         int32_t aScreenY, double aDeltaX,
-                                        double aDeltaY,
-                                        int32_t aModifierFlags) {
+                                        double aDeltaY, int32_t aModifierFlags,
+                                        nsIObserver* aObserver) {
   nsCOMPtr<nsIWidget> widget = GetWidget();
   if (!widget) {
     return NS_ERROR_FAILURE;
@@ -1191,12 +1194,12 @@ nsDOMWindowUtils::SendNativeTouchpadPan(uint32_t aEventPhase, int32_t aScreenX,
   MOZ_ASSERT(aModifierFlags >= 0);
   NS_DispatchToMainThread(NativeInputRunnable::Create(
       NewRunnableMethod<nsIWidget::TouchpadGesturePhase, LayoutDeviceIntPoint,
-                        double, double, uint32_t>(
+                        double, double, uint32_t, nsIObserver*>(
           "nsIWidget::SynthesizeNativeTouchpadPan", widget,
           &nsIWidget::SynthesizeNativeTouchpadPan,
           (nsIWidget::TouchpadGesturePhase)aEventPhase,
           LayoutDeviceIntPoint(aScreenX, aScreenY), aDeltaX, aDeltaY,
-          aModifierFlags)));
+          aModifierFlags, aObserver)));
   return NS_OK;
 }
 
@@ -2189,19 +2192,6 @@ nsDOMWindowUtils::GetViewId(Element* aElement, nsViewID* aResult) {
 }
 
 NS_IMETHODIMP
-nsDOMWindowUtils::GetScreenPixelsPerCSSPixelNoOverride(float* aScreenPixels) {
-  nsPresContext* presContext = GetPresContext();
-  if (!presContext) {
-    *aScreenPixels = 1.0;
-    return NS_OK;
-  }
-
-  *aScreenPixels =
-      float(AppUnitsPerCSSPixel()) / float(presContext->AppUnitsPerDevPixel());
-  return NS_OK;
-}
-
-NS_IMETHODIMP
 nsDOMWindowUtils::GetFullZoom(float* aFullZoom) {
   *aFullZoom = 1.0f;
 
@@ -2521,7 +2511,7 @@ nsDOMWindowUtils::GetVisitedDependentComputedStyle(
   nsCOMPtr<nsPIDOMWindowOuter> window = do_QueryReferent(mWindow);
   NS_ENSURE_STATE(window && aElement);
   nsCOMPtr<nsPIDOMWindowInner> innerWindow = window->GetCurrentInnerWindow();
-  NS_ENSURE_STATE(window);
+  NS_ENSURE_STATE(innerWindow);
 
   nsCOMPtr<nsICSSDeclaration> decl;
   {
@@ -4066,6 +4056,19 @@ nsDOMWindowUtils::SetHandlingUserInput(bool aHandlingUserInput,
 }
 
 NS_IMETHODIMP
+nsDOMWindowUtils::IsKeyboardEventUserActivity(Event* aEvent, bool* aResult) {
+  NS_ENSURE_STATE(aEvent);
+  if (!aEvent->AsKeyboardEvent()) {
+    return NS_ERROR_INVALID_ARG;
+  }
+
+  WidgetEvent* internalEvent = aEvent->WidgetEventPtr();
+  NS_ENSURE_STATE(internalEvent);
+  *aResult = EventStateManager::IsKeyboardEventUserActivity(internalEvent);
+  return NS_OK;
+}
+
+NS_IMETHODIMP
 nsDOMWindowUtils::GetContentAPZTestData(
     JSContext* aContext, JS::MutableHandleValue aOutContentTestData) {
   if (nsIWidget* widget = GetWidget()) {
@@ -4747,5 +4750,34 @@ nsDOMWindowUtils::GetSuspendedByBrowsingContextGroup(bool* aResult) {
   NS_ENSURE_TRUE(inner, NS_ERROR_FAILURE);
 
   *aResult = inner->GetWasSuspendedByGroup();
+  return NS_OK;
+}
+
+NS_IMETHODIMP
+nsDOMWindowUtils::GetHasScrollLinkedEffect(bool* aResult) {
+  Document* doc = GetDocument();
+  if (!doc) {
+    return NS_ERROR_FAILURE;
+  }
+  *aResult = doc->HasScrollLinkedEffect();
+  return NS_OK;
+}
+
+NS_IMETHODIMP
+nsDOMWindowUtils::GetOrientationLock(uint32_t* aOrientationLock) {
+  NS_WARNING("nsDOMWindowUtils::GetOrientationLock");
+
+  nsIDocShell* docShell = GetDocShell();
+  if (!docShell) {
+    return NS_ERROR_FAILURE;
+  }
+
+  BrowsingContext* bc = docShell->GetBrowsingContext();
+  bc = bc ? bc->Top() : nullptr;
+  if (!bc) {
+    return NS_ERROR_FAILURE;
+  }
+
+  *aOrientationLock = static_cast<uint32_t>(bc->GetOrientationLock());
   return NS_OK;
 }

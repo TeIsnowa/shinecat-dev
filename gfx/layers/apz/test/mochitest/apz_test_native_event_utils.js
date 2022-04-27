@@ -316,21 +316,14 @@ async function coordinatesRelativeToScreen(aParams) {
   // in such cases we simply use mozInnerScreen{X,Y} to convert the given value
   // to the screen coords.
   if (target instanceof Window && window.parent == window) {
-    // moxInnerScreen{X,Y} are in CSS coordinates of the browser chrome.
-    // The device scale applies to them, but the resolution only zooms the content.
-    // In addition, if we're inside RDM, RDM overrides the device scale;
-    // the overridden scale only applies to the content inside the RDM
-    // document, not to mozInnerScreen{X,Y}.
-    const utils = SpecialPowers.getDOMWindowUtils(window);
     const resolution = await getResolution();
     const deviceScale = window.devicePixelRatio;
-    const deviceScaleNoOverride = utils.screenPixelsPerCSSPixelNoOverride;
     return {
       x:
-        window.mozInnerScreenX * deviceScaleNoOverride +
+        window.mozInnerScreenX * deviceScale +
         (atCenter ? 0 : offsetX) * resolution * deviceScale,
       y:
-        window.mozInnerScreenY * deviceScaleNoOverride +
+        window.mozInnerScreenY * deviceScale +
         (atCenter ? 0 : offsetY) * resolution * deviceScale,
     };
   }
@@ -363,8 +356,8 @@ function rectRelativeToScreen(aElement) {
   return {
     x: (targetWindow.mozInnerScreenX + rect.left) * scale,
     y: (targetWindow.mozInnerScreenY + rect.top) * scale,
-    w: rect.width * scale,
-    h: rect.height * scale,
+    width: rect.width * scale,
+    height: rect.height * scale,
   };
 }
 
@@ -469,11 +462,12 @@ async function synthesizeNativePanGestureEvent(
   return true;
 }
 
-// Sends a native touchpad pan event.
+// Sends a native touchpad pan event and resolve the returned promise once the
+// request has been successfully made to the OS.
 // NOTE: This works only on Windows.
 // You can specify nsIDOMWindowUtils.PHASE_BEGIN, PHASE_UPDATE and PHASE_END
 // for |aPhase|.
-async function promiseNativeTouchpadPan(
+async function promiseNativeTouchpadPanEventAndWaitForObserver(
   aTarget,
   aX,
   aY,
@@ -483,7 +477,7 @@ async function promiseNativeTouchpadPan(
 ) {
   if (getPlatform() != "windows") {
     throw new Error(
-      `promiseNativeTouchpadPan doesn't work on ${getPlatform()}`
+      `promiseNativeTouchpadPanEventAndWaitForObserver doesn't work on ${getPlatform()}`
     );
   }
 
@@ -494,9 +488,26 @@ async function promiseNativeTouchpadPan(
   });
 
   const utils = utilsForTarget(aTarget);
-  utils.sendNativeTouchpadPan(aPhase, pt.x, pt.y, aDeltaX, aDeltaY, 0);
 
-  return promiseFrame();
+  return new Promise(resolve => {
+    var observer = {
+      observe(aSubject, aTopic, aData) {
+        if (aTopic == "touchpadpanevent") {
+          resolve();
+        }
+      },
+    };
+
+    utils.sendNativeTouchpadPan(
+      aPhase,
+      pt.x,
+      pt.y,
+      aDeltaX,
+      aDeltaY,
+      0,
+      observer
+    );
+  });
 }
 
 // Synthesizes a native pan gesture event and resolve the returned promise once the

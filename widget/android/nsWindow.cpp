@@ -889,9 +889,12 @@ class LayerViewSupport final
   GeckoSession::Compositor::WeakRef mCompositor;
   Atomic<bool, ReleaseAcquire> mCompositorPaused;
   java::sdk::Surface::GlobalRef mSurface;
+  java::sdk::SurfaceControl::GlobalRef mSurfaceControl;
   // Used to communicate with the gecko compositor from the UI thread.
   // Set in NotifyCompositorCreated and cleared in NotifyCompositorSessionLost.
   RefPtr<UiCompositorControllerChild> mUiCompositorControllerChild;
+
+  Maybe<uint32_t> mDefaultClearColor;
 
   struct CaptureRequest {
     explicit CaptureRequest() : mResult(nullptr) {}
@@ -1011,8 +1014,12 @@ class LayerViewSupport final
       nsWindow* gkWindow = window->GetNsWindow();
       if (gkWindow) {
         mUiCompositorControllerChild->OnCompositorSurfaceChanged(
-            gkWindow->mWidgetId, mSurface);
+            gkWindow->mWidgetId, mSurface, mSurfaceControl);
       }
+    }
+
+    if (mDefaultClearColor) {
+      mUiCompositorControllerChild->SetDefaultClearColor(*mDefaultClearColor);
     }
 
     if (!mCompositorPaused) {
@@ -1041,6 +1048,9 @@ class LayerViewSupport final
   }
 
   java::sdk::Surface::Param GetSurface() { return mSurface; }
+  java::sdk::SurfaceControl::Param GetSurfaceControl() {
+    return mSurfaceControl;
+  }
 
  private:
   already_AddRefed<DataSourceSurface> FlipScreenPixels(
@@ -1187,10 +1197,20 @@ class LayerViewSupport final
 
   void SyncResumeResizeCompositor(
       const GeckoSession::Compositor::LocalRef& aObj, int32_t aX, int32_t aY,
-      int32_t aWidth, int32_t aHeight, jni::Object::Param aSurface) {
+      int32_t aWidth, int32_t aHeight, jni::Object::Param aSurface,
+      jni::Object::Param aSurfaceControl) {
     MOZ_ASSERT(AndroidBridge::IsJavaUiThread());
 
     mSurface = java::sdk::Surface::GlobalRef::From(aSurface);
+    mSurfaceControl =
+        java::sdk::SurfaceControl::GlobalRef::From(aSurfaceControl);
+    if (mSurfaceControl) {
+      // Setting the SurfaceControl's buffer size here ensures child Surfaces
+      // created by the compositor have the correct size.
+      java::sdk::SurfaceControl::Transaction::LocalRef transaction =
+          java::sdk::SurfaceControl::Transaction::New();
+      transaction->SetBufferSize(mSurfaceControl, aWidth, aHeight)->Apply();
+    }
 
     if (mUiCompositorControllerChild) {
       if (auto window = mWindow.Access()) {
@@ -1198,7 +1218,7 @@ class LayerViewSupport final
         if (gkWindow) {
           // Send new Surface to GPU process, if one exists.
           mUiCompositorControllerChild->OnCompositorSurfaceChanged(
-              gkWindow->mWidgetId, mSurface);
+              gkWindow->mWidgetId, mSurface, mSurfaceControl);
         }
       }
 
@@ -1332,6 +1352,7 @@ class LayerViewSupport final
 
   void SetDefaultClearColor(int32_t aColor) {
     MOZ_ASSERT(AndroidBridge::IsJavaUiThread());
+    mDefaultClearColor = Some((uint32_t)aColor);
     if (mUiCompositorControllerChild) {
       mUiCompositorControllerChild->SetDefaultClearColor((uint32_t)aColor);
     }
@@ -1475,6 +1496,11 @@ void GeckoViewSupport::Open(
   MOZ_ASSERT(NS_IsMainThread());
 
   AUTO_PROFILER_LABEL("mozilla::widget::GeckoViewSupport::Open", OTHER);
+
+  // We'll need gfxPlatform to be initialized to create a compositor later.
+  // Might as well do that now so that the GPU process launch can get a head
+  // start.
+  gfxPlatform::GetPlatform();
 
   nsCOMPtr<nsIWindowWatcher> ww = do_GetService(NS_WINDOWWATCHER_CONTRACTID);
   MOZ_RELEASE_ASSERT(ww);
@@ -1808,6 +1834,7 @@ nsresult nsWindow::Create(nsIWidget* aParent, nsNativeWidget aNativeParent,
   }
 
   mBounds = rect;
+  SetSizeConstraints(SizeConstraints());
 
   BaseCreate(nullptr, aInitData);
 
@@ -1821,8 +1848,6 @@ nsresult nsWindow::Create(nsIWidget* aParent, nsNativeWidget aNativeParent,
     parent->mChildren.AppendElement(this);
     mParent = parent;
   }
-
-  CreateLayerManager();
 
 #ifdef DEBUG_ANDROID_WIDGET
   DumpWindows();
@@ -2052,16 +2077,20 @@ void nsWindow::Resize(double aX, double aY, double aWidth, double aHeight,
   ALOG("nsWindow[%p]::Resize [%f %f %f %f] (repaint %d)", (void*)this, aX, aY,
        aWidth, aHeight, aRepaint);
 
-  bool needPositionDispatch = aX != mBounds.x || aY != mBounds.y;
-  bool needSizeDispatch = aWidth != mBounds.width || aHeight != mBounds.height;
+  LayoutDeviceIntRect oldBounds = mBounds;
 
   mBounds.x = NSToIntRound(aX);
   mBounds.y = NSToIntRound(aY);
   mBounds.width = NSToIntRound(aWidth);
   mBounds.height = NSToIntRound(aHeight);
 
+  ConstrainSize(&mBounds.width, &mBounds.height);
+
+  bool needPositionDispatch = mBounds.TopLeft() != oldBounds.TopLeft();
+  bool needSizeDispatch = mBounds.Size() != oldBounds.Size();
+
   if (needSizeDispatch) {
-    OnSizeChanged(gfx::IntSize::Truncate(aWidth, aHeight));
+    OnSizeChanged(mBounds.Size().ToUnknownSize());
   }
 
   if (needPositionDispatch) {
@@ -2294,15 +2323,17 @@ void nsWindow::OnSizeChanged(const gfx::IntSize& aSize) {
   ALOG("nsWindow: %p OnSizeChanged [%d %d]", (void*)this, aSize.width,
        aSize.height);
 
-  mBounds.width = aSize.width;
-  mBounds.height = aSize.height;
-
   if (mWidgetListener) {
     mWidgetListener->WindowResized(this, aSize.width, aSize.height);
   }
 
   if (mAttachedWidgetListener) {
     mAttachedWidgetListener->WindowResized(this, aSize.width, aSize.height);
+  }
+
+  if (mCompositorWidgetDelegate) {
+    mCompositorWidgetDelegate->NotifyClientSizeChanged(
+        LayoutDeviceIntSize::FromUnknownSize(aSize));
   }
 }
 
@@ -2372,6 +2403,13 @@ void* nsWindow::GetNativeData(uint32_t aDataType) {
       if (::mozilla::jni::NativeWeakPtr<LayerViewSupport>::Accessor lvs{
               mLayerViewSupport.Access()}) {
         return lvs->GetSurface().Get();
+      }
+      return nullptr;
+
+    case NS_JAVA_SURFACE_CONTROL:
+      if (::mozilla::jni::NativeWeakPtr<LayerViewSupport>::Accessor lvs{
+              mLayerViewSupport.Access()}) {
+        return lvs->GetSurfaceControl().Get();
       }
       return nullptr;
   }
@@ -2954,7 +2992,7 @@ void nsWindow::SetCursor(const Cursor& aCursor) {
             bitmap = java::sdk::Bitmap::CreateBitmap(
                 destDataSurface->GetSize().width,
                 destDataSurface->GetSize().height,
-                java::sdk::Config::ARGB_8888());
+                java::sdk::Bitmap::Config::ARGB_8888());
             bitmap->CopyPixelsFromBuffer(pixels);
           }
           compositor->SetPointerIcon(type, bitmap, hotspotX, hotspotY);

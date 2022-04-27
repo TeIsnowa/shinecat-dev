@@ -68,11 +68,6 @@ ChromeUtils.defineModuleGetter(
   "NetUtil",
   "resource://gre/modules/NetUtil.jsm"
 );
-ChromeUtils.defineModuleGetter(
-  this,
-  "CloudStorage",
-  "resource://gre/modules/CloudStorage.jsm"
-);
 
 XPCOMUtils.defineLazyServiceGetter(
   this,
@@ -265,7 +260,7 @@ var DownloadIntegration = {
 
     this._store = new DownloadStore(
       list,
-      PathUtils.join(await PathUtils.getProfileDir(), "downloads.json")
+      PathUtils.join(PathUtils.profileDir, "downloads.json")
     );
     this._store.onsaveitem = this.shouldPersistDownload.bind(this);
 
@@ -378,14 +373,6 @@ var DownloadIntegration = {
         } catch (ex) {
           Cu.reportError(ex);
           // Either the preference isn't set or the directory cannot be created.
-          directoryPath = await this.getSystemDownloadsDirectory();
-        }
-        break;
-      case 3: // Cloud Storage
-        try {
-          directoryPath = await CloudStorage.getDownloadFolder();
-        } catch (ex) {}
-        if (!directoryPath) {
           directoryPath = await this.getSystemDownloadsDirectory();
         }
         break;
@@ -629,7 +616,7 @@ var DownloadIntegration = {
           );
         } catch (ex) {
           // If writing to the file fails, we ignore the error and continue.
-          if (!(ex instanceof DOMException)) {
+          if (!DOMException.isInstance(ex)) {
             Cu.reportError(ex);
           }
         }
@@ -669,7 +656,7 @@ var DownloadIntegration = {
       // We should report errors with making the permissions less restrictive
       // or marking the file as read-only on Unix and Mac, but this should not
       // prevent the download from completing.
-      if (!(ex instanceof DOMException)) {
+      if (!DOMException.isInstance(ex)) {
         Cu.reportError(ex);
       }
     }

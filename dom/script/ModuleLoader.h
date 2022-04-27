@@ -40,23 +40,22 @@ class ModuleLoader final : public JS::loader::ModuleLoaderBase {
   virtual ~ModuleLoader();
 
  public:
-  explicit ModuleLoader(ScriptLoader* aLoader);
+  enum Kind { Normal, WebExtension };
+
+  ModuleLoader(ScriptLoader* aLoader, nsIGlobalObject* aGlobalObject,
+               Kind aKind);
+
+  Kind GetKind() const { return mKind; }
 
   ScriptLoader* GetScriptLoader();
 
-  // Methods that must be overwritten by an extending class
-  void EnsureModuleHooksInitialized() override;
+  bool CanStartLoad(ModuleLoadRequest* aRequest, nsresult* aRvOut) override;
 
-  /**
-   * Start a load for a module script URI.
-   * Sets up the necessary security flags before calling StartLoadInternal.
-   * Short-circuits if the module is already being loaded.
-   */
-  nsresult StartModuleLoad(ScriptLoadRequest* aRequest) override;
+  nsresult StartFetch(ModuleLoadRequest* aRequest) override;
 
-  void ProcessLoadedModuleTree(ModuleLoadRequest* aRequest) override;
+  void OnModuleLoadComplete(ModuleLoadRequest* aRequest) override;
 
-  nsresult CompileOrFinishModuleScript(
+  nsresult CompileFetchedModule(
       JSContext* aCx, JS::Handle<JSObject*> aGlobal,
       JS::CompileOptions& aOptions, ModuleLoadRequest* aRequest,
       JS::MutableHandle<JSObject*> aModuleScript) override;
@@ -71,12 +70,19 @@ class ModuleLoader final : public JS::loader::ModuleLoaderBase {
   already_AddRefed<ModuleLoadRequest> CreateStaticImport(
       nsIURI* aURI, ModuleLoadRequest* aParent) override;
 
-  // Create a module load request for dynamic module import.
-  static already_AddRefed<ModuleLoadRequest> CreateDynamicImport(
-      nsIURI* aURI, ScriptFetchOptions* aFetchOptions, nsIURI* aBaseURL,
-      ScriptLoadContext* aContext, ScriptLoader* aLoader,
+  // Create a module load request for a dynamic module import.
+  already_AddRefed<ModuleLoadRequest> CreateDynamicImport(
+      JSContext* aCx, nsIURI* aURI, LoadedScript* aMaybeActiveScript,
       JS::Handle<JS::Value> aReferencingPrivate,
-      JS::Handle<JSString*> aSpecifier, JS::Handle<JSObject*> aPromise);
+      JS::Handle<JSString*> aSpecifier,
+      JS::Handle<JSObject*> aPromise) override;
+
+  static ModuleLoader* From(ModuleLoaderBase* aLoader) {
+    return static_cast<ModuleLoader*>(aLoader);
+  }
+
+ private:
+  const Kind mKind;
 };
 
 }  // namespace dom

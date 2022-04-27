@@ -997,10 +997,12 @@ class NativeObject : public JSObject {
                                            HandleNativeObject obj,
                                            uint32_t nfixed);
 
-  [[nodiscard]] static bool fillInAfterSwap(JSContext* cx,
-                                            HandleNativeObject obj,
-                                            NativeObject* old,
-                                            HandleValueVector values);
+  [[nodiscard]] bool copyAndFreeSlotsBeforeSwap(
+      JSContext* cx, MutableHandleValueVector values);
+  [[nodiscard]] static bool fillInSlotsAfterSwap(JSContext* cx,
+                                                 HandleNativeObject obj,
+                                                 gc::AllocKind kind,
+                                                 HandleValueVector values);
 
  public:
   // Return true if this object has been converted from shared-immutable
@@ -1729,8 +1731,8 @@ bool IsPackedArray(JSObject* obj);
 // Initialize an object's reserved slot with a private value pointing to
 // malloc-allocated memory and associate the memory with the object.
 //
-// This call should be matched with a call to JSFreeOp::free_/delete_ in the
-// object's finalizer to free the memory and update the memory accounting.
+// This call should be matched with a call to JS::GCContext::free_/delete_ in
+// the object's finalizer to free the memory and update the memory accounting.
 
 inline void InitReservedSlot(NativeObject* obj, uint32_t slot, void* ptr,
                              size_t nbytes, MemoryUse use) {

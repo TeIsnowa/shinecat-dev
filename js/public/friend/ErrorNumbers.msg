@@ -480,6 +480,7 @@ MSG_DEF(JSMSG_WASM_BAD_EXN_ARG,        0, JSEXN_TYPEERR,     "first argument mus
 MSG_DEF(JSMSG_WASM_BAD_EXN_PAYLOAD,    0, JSEXN_TYPEERR,     "second argument must be an object")
 MSG_DEF(JSMSG_WASM_BAD_EXN_PAYLOAD_LEN, 2, JSEXN_TYPEERR,    "expected {0} values but got {1}")
 MSG_DEF(JSMSG_WASM_BAD_EXN_TAG,        0, JSEXN_TYPEERR,     "exception's tag did not match the provided exception tag")
+MSG_DEF(JSMSG_WASM_BAD_EXN_OPTIONS,    0, JSEXN_TYPEERR,     "argument cannot be converted to an ExceptionOptions")
 MSG_DEF(JSMSG_WASM_BAD_FUNCTION_VALUE, 0, JSEXN_TYPEERR,     "second argument must be a function")
 MSG_DEF(JSMSG_WASM_BAD_ARG_TYPE,       0, JSEXN_TYPEERR,     "parameters and results must be an iterator of value types")
 MSG_DEF(JSMSG_WASM_NO_TRANSFER,        0, JSEXN_TYPEERR,     "cannot transfer WebAssembly/asm.js ArrayBuffer")
@@ -828,7 +829,7 @@ MSG_DEF(JSMSG_NEGATIVE_LIMIT,                            0, JSEXN_RANGEERR, "Ite
 // Record and Tuple
 MSG_DEF(JSMSG_RECORD_TUPLE_NO_OBJECT,                    0, JSEXN_TYPEERR, "Record and Tuple can only contain primitive values")
 MSG_DEF(JSMSG_RECORD_NO_PROTO,                           0, JSEXN_SYNTAXERR, "__proto__ is not a valid literal key in records")
-MSG_DEF(JSMSG_RECORD_NO_SYMBOL_KEY,						 0, JSEXN_TYPEERR, "Symbols cannot be used as record keys")
+MSG_DEF(JSMSG_RECORD_NO_SYMBOL_KEY,                      0, JSEXN_TYPEERR, "Symbols cannot be used as record keys")
 MSG_DEF(JSMSG_RECORD_INVALID_DESCRIPTOR,                 0, JSEXN_TYPEERR, "Invalid record property descriptor")
 MSG_DEF(JSMSG_BAD_TUPLE_LENGTH,        0, JSEXN_TYPEERR, "attempted to create excessively long tuple")
 MSG_DEF(JSMSG_BAD_TUPLE_INDEX,        0, JSEXN_RANGEERR, "index out of range for tuple")

@@ -3156,6 +3156,17 @@ class nsIFrame : public nsQueryFrame {
   bool IsContentDisabled() const;
 
   /**
+   * Whether the content is hidden via the `content-visibilty` property.
+   */
+  bool IsContentHidden() const;
+
+  /**
+   * Returns true if this frame is entirely hidden due the `content-visibility`
+   * property on an ancestor.
+   */
+  bool AncestorHidesContent() const;
+
+  /**
    * Get the "type" of the frame.
    *
    * @see mozilla::LayoutFrameType
@@ -3366,8 +3377,13 @@ class nsIFrame : public nsQueryFrame {
   bool IsLeaf() const {
     MOZ_ASSERT(uint8_t(mClass) < mozilla::ArrayLength(sFrameClassBits));
     FrameClassBits bits = sFrameClassBits[uint8_t(mClass)];
+    if (MOZ_UNLIKELY(bits & eFrameClassBitsDynamicLeaf)) {
+      return IsLeafDynamic();
+    }
     return bits & eFrameClassBitsLeaf;
   }
+
+  virtual bool IsLeafDynamic() const { return false; }
 
   /**
    * Marks all display items created by this frame as needing a repaint,
@@ -3563,8 +3579,6 @@ class nsIFrame : public nsQueryFrame {
     return GetOverflowRect(mozilla::OverflowType::Scrollable);
   }
 
-  nsRect GetOverflowRect(mozilla::OverflowType aType) const;
-
   mozilla::OverflowAreas GetOverflowAreas() const;
 
   /**
@@ -3583,6 +3597,17 @@ class nsIFrame : public nsQueryFrame {
    * frame's coordinate system
    */
   mozilla::OverflowAreas GetOverflowAreasRelativeToParent() const;
+
+  /**
+   * Same as GetOverflowAreasRelativeToParent(), except that it also unions in
+   * the normal position overflow area if this frame is relatively or sticky
+   * positioned.
+   *
+   * @return the overflow area relative to the parent frame, in the parent
+   * frame's coordinate system
+   */
+  mozilla::OverflowAreas GetActualAndNormalOverflowAreasRelativeToParent()
+      const;
 
   /**
    * Same as ScrollableOverflowRect, except relative to the parent
@@ -4534,8 +4559,14 @@ class nsIFrame : public nsQueryFrame {
   inline bool IsFloating() const;
   inline bool IsAbsPosContainingBlock() const;
   inline bool IsFixedPosContainingBlock() const;
+  inline bool IsRelativelyOrStickyPositioned() const;
+
+  // Note: In general, you'd want to call IsRelativelyOrStickyPositioned()
+  // unless you want to deal with "position:relative" and "position:sticky"
+  // differently.
   inline bool IsRelativelyPositioned() const;
   inline bool IsStickyPositioned() const;
+
   inline bool IsAbsolutelyPositioned(
       const nsStyleDisplay* aStyleDisplay = nullptr) const;
   inline bool IsTrueOverflowContainer() const;
@@ -5349,6 +5380,8 @@ class nsIFrame : public nsQueryFrame {
                                           bool aIsKeyboardSelect);
 
  private:
+  nsRect GetOverflowRect(mozilla::OverflowType aType) const;
+
   // Get a pointer to the overflow areas property attached to the frame.
   mozilla::OverflowAreas* GetOverflowAreasProperty() const {
     MOZ_ASSERT(mOverflow.mType == OverflowStorageType::Large);
@@ -5396,6 +5429,7 @@ class nsIFrame : public nsQueryFrame {
   enum FrameClassBits {
     eFrameClassBitsNone = 0x0,
     eFrameClassBitsLeaf = 0x1,
+    eFrameClassBitsDynamicLeaf = 0x2,
   };
   // Maps mClass to IsLeaf() flags.
   static const FrameClassBits sFrameClassBits[

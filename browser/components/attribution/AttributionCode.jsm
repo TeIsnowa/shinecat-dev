@@ -33,8 +33,7 @@ ChromeUtils.defineModuleGetter(
   "resource:///modules/MacAttribution.jsm"
 );
 XPCOMUtils.defineLazyGetter(this, "log", () => {
-  let ConsoleAPI = ChromeUtils.import("resource://gre/modules/Console.jsm", {})
-    .ConsoleAPI;
+  let { ConsoleAPI } = ChromeUtils.import("resource://gre/modules/Console.jsm");
   let consoleOptions = {
     // tip: set maxLogLevel to "debug" and use log.debug() to create detailed
     // messages during development. See LOG_LEVELS in Console.jsm for details.
@@ -317,7 +316,7 @@ var AttributionCode = {
     try {
       bytes = await AttributionIOUtils.read(attributionFile.path);
     } catch (ex) {
-      if (ex instanceof DOMException && ex.name == "NotFoundError") {
+      if (DOMException.isInstance(ex) && ex.name == "NotFoundError") {
         log.debug(
           `getAttrDataAsync: !exists("${
             attributionFile.path

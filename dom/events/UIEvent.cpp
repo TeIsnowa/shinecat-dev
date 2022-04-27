@@ -197,7 +197,8 @@ void UIEvent::DuplicatePrivateData() {
                                     mDefaultClientPoint);
   // GetScreenPoint converts mEvent->mRefPoint to right coordinates.
   CSSIntPoint screenPoint =
-      Event::GetScreenCoords(mPresContext, mEvent, mEvent->mRefPoint);
+      Event::GetScreenCoords(mPresContext, mEvent, mEvent->mRefPoint)
+          .valueOr(CSSIntPoint{0, 0});
 
   Event::DuplicatePrivateData();
 
@@ -207,19 +208,20 @@ void UIEvent::DuplicatePrivateData() {
   mEvent->mRefPoint = RoundedToInt(screenPoint * scale);
 }
 
-void UIEvent::Serialize(IPC::Message* aMsg, bool aSerializeInterfaceType) {
+void UIEvent::Serialize(IPC::MessageWriter* aWriter,
+                        bool aSerializeInterfaceType) {
   if (aSerializeInterfaceType) {
-    IPC::WriteParam(aMsg, u"uievent"_ns);
+    IPC::WriteParam(aWriter, u"uievent"_ns);
   }
 
-  Event::Serialize(aMsg, false);
+  Event::Serialize(aWriter, false);
 
-  IPC::WriteParam(aMsg, Detail());
+  IPC::WriteParam(aWriter, Detail());
 }
 
-bool UIEvent::Deserialize(const IPC::Message* aMsg, PickleIterator* aIter) {
-  NS_ENSURE_TRUE(Event::Deserialize(aMsg, aIter), false);
-  NS_ENSURE_TRUE(IPC::ReadParam(aMsg, aIter, &mDetail), false);
+bool UIEvent::Deserialize(IPC::MessageReader* aReader) {
+  NS_ENSURE_TRUE(Event::Deserialize(aReader), false);
+  NS_ENSURE_TRUE(IPC::ReadParam(aReader, &mDetail), false);
   return true;
 }
 

@@ -584,7 +584,6 @@ var Policies = {
         setAndLockPref("devtools.chrome.enabled", false);
 
         manager.disallowFeature("devtools");
-        blockAboutPage(manager, "about:devtools");
         blockAboutPage(manager, "about:debugging");
         blockAboutPage(manager, "about:devtools-toolbox");
         blockAboutPage(manager, "about:profiling");
@@ -1436,6 +1435,12 @@ var Policies = {
         setAndLockPref("pref.privacy.disable_button.view_passwords", true);
       }
       setAndLockPref("signon.rememberSignons", param);
+    },
+  },
+
+  PasswordManagerExceptions: {
+    onBeforeUIStartup(manager, param) {
+      addAllowDenyPermissions("login-saving", null, param);
     },
   },
 

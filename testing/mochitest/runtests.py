@@ -1650,7 +1650,9 @@ toolbar#nav-bar {
                 del test["disabled"]
 
             pathAbs = os.path.abspath(test["path"])
-            assert pathAbs.startswith(self.testRootAbs)
+            assert os.path.normcase(pathAbs).startswith(
+                os.path.normcase(self.testRootAbs)
+            )
             tp = pathAbs[len(self.testRootAbs) :].replace("\\", "/").strip("/")
 
             if not self.isTest(options, tp):
@@ -2250,7 +2252,7 @@ toolbar#nav-bar {
         return os.pathsep.join(gmp_paths)
 
     def cleanup(self, options, final=False):
-        """remove temporary files and profile"""
+        """remove temporary files, profile and virtual audio input device"""
         if hasattr(self, "manifest") and self.manifest is not None:
             if os.path.exists(self.manifest):
                 os.remove(self.manifest)
@@ -2271,6 +2273,24 @@ toolbar#nav-bar {
                     % options.pidFile
                 )
         options.manifestFile = None
+
+        if hasattr(self, "virtualInputDeviceIdList"):
+            pactl = spawn.find_executable("pactl")
+
+            if not pactl:
+                self.log.error("Could not find pactl on system")
+                return None
+
+            for id in self.virtualInputDeviceIdList:
+                try:
+                    subprocess.check_call([pactl, "unload-module", str(id)])
+                except subprocess.CalledProcessError:
+                    self.log.error(
+                        "Could not remove pulse module with id {}".format(id)
+                    )
+                    return None
+
+            self.virtualInputDeviceIdList = []
 
     def dumpScreen(self, utilityPath):
         if self.haveDumpedScreen:
@@ -2654,27 +2674,34 @@ toolbar#nav-bar {
                 quiet=quiet,
             )
 
+            expected = None
             if crashAsPass:
                 # self.message_logger.is_test_running indicates we need a test_end message
                 if crash_count > 0 and self.message_logger.is_test_running:
                     # this works for browser-chrome, mochitest-plain has status=0
-                    message = {
-                        "action": "test_end",
-                        "status": "CRASH",
-                        "expected": "CRASH",
-                        "thread": None,
-                        "pid": None,
-                        "source": "mochitest",
-                        "time": int(time.time()) * 1000,
-                        "test": self.lastTestSeen,
-                        "message": "application terminated with exit code 0",
-                    }
-                    # need to send a test_end in order to have mozharness process messages properly
-                    # this requires a custom message vs log.error/log.warning/etc.
-                    self.message_logger.process_message(message)
+                    expected = "CRASH"
                 status = 0
             elif crash_count or zombieProcesses:
+                if self.message_logger.is_test_running:
+                    expected = "PASS"
                 status = 1
+
+            if expected:
+                # send this out so we always wrap up the test-end message
+                message = {
+                    "action": "test_end",
+                    "status": "CRASH",
+                    "expected": expected,
+                    "thread": None,
+                    "pid": None,
+                    "source": "mochitest",
+                    "time": int(time.time()) * 1000,
+                    "test": self.lastTestSeen,
+                    "message": "application terminated with exit code 0",
+                }
+                # need to send a test_end in order to have mozharness process messages properly
+                # this requires a custom message vs log.error/log.warning/etc.
+                self.message_logger.process_message(message)
         finally:
             # cleanup
             if os.path.exists(processLog):
@@ -2697,6 +2724,65 @@ toolbar#nav-bar {
         self.result.clear()
         options.manifestFile = None
         options.profilePath = None
+
+    def initializeVirtualInputDevices(self):
+        """
+        Configure the system to have a number of virtual audio input devices, that
+        each produce a tone at a particular frequency.
+
+        This method is only currently implemented for Linux.
+        """
+        if not mozinfo.isLinux:
+            return
+
+        pactl = spawn.find_executable("pactl")
+
+        if not pactl:
+            self.log.error("Could not find pactl on system")
+            return
+
+        DEVICES_COUNT = 4
+        DEVICES_BASE_FREQUENCY = 110  # Hz
+        self.virtualInputDeviceIdList = []
+        # If the device are already present, find their id and return early
+        o = subprocess.check_output([pactl, "list", "modules", "short"])
+        found_devices = 0
+        for input in o.splitlines():
+            device = input.decode().split("\t")
+            if device[1] == "module-sine-source":
+                self.virtualInputDeviceIdList.append(int(device[0]))
+                found_devices += 1
+
+        if found_devices == DEVICES_COUNT:
+            return
+        elif found_devices != 0:
+            # Remove all devices and reinitialize them properly
+            for id in self.virtualInputDeviceIdList:
+                try:
+                    subprocess.check_call([pactl, "unload-module", str(id)])
+                except subprocess.CalledProcessError:
+                    log.error("Could not remove pulse module with id {}".format(id))
+                    return None
+
+        # We want quite a number of input devices, each with a different tone
+        # frequency and device name so that we can recognize them easily during
+        # testing.
+        command = [pactl, "load-module", "module-sine-source", "rate=44100"]
+        for i in range(1, DEVICES_COUNT + 1):
+            freq = i * DEVICES_BASE_FREQUENCY
+            complete_command = command + [
+                "source_name=sine-{}".format(freq),
+                "frequency={}".format(freq),
+            ]
+            try:
+                o = subprocess.check_output(complete_command)
+                self.virtualInputDeviceIdList.append(o)
+
+            except subprocess.CalledProcessError:
+                self.log.error(
+                    "Could not create device with module-sine-source"
+                    " (freq={})".format(freq)
+                )
 
     def normalize_paths(self, paths):
         # Normalize test paths so they are relative to test root
@@ -3122,6 +3208,7 @@ toolbar#nav-bar {
                 self.log.error("Could not find test media devices to use")
                 return 1
             self.mediaDevices = devices
+            self.initializeVirtualInputDevices()
 
         # See if we were asked to run on Valgrind
         valgrindPath = None

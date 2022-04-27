@@ -1143,11 +1143,6 @@ class SpecialPowersChild extends JSWindowActorChild {
   removeAutoCompletePopupEventListener(window, eventname, listener) {
     this._getAutoCompletePopup(window).removeEventListener(eventname, listener);
   }
-  get formHistory() {
-    let tmp = {};
-    ChromeUtils.import("resource://gre/modules/FormHistory.jsm", tmp);
-    return tmp.FormHistory;
-  }
   getFormFillController(window) {
     return Cc["@mozilla.org/satchel/form-fill-controller;1"].getService(
       Ci.nsIFormFillController
@@ -1298,7 +1293,7 @@ class SpecialPowersChild extends JSWindowActorChild {
       return el;
     };
 
-    if (Window.isInstance(content)) {
+    if (!Cu.isRemoteProxy(content) && Window.isInstance(content)) {
       // Hack around tests that try to snapshot 0 width or height
       // elements.
       if (rect && !(rect.width && rect.height)) {
@@ -1938,7 +1933,7 @@ class SpecialPowersChild extends JSWindowActorChild {
   }
 
   cleanUpSTSData(origin, flags) {
-    return this.sendQuery("SPCleanUpSTSData", { origin, flags: flags || 0 });
+    return this.sendQuery("SPCleanUpSTSData", { origin });
   }
 
   async requestDumpCoverageCounters(cb) {
@@ -2016,6 +2011,14 @@ class SpecialPowersChild extends JSWindowActorChild {
 
       grantActiveTab(tabId) {
         sp.sendAsyncMessage("SPExtensionGrantActiveTab", { id, tabId });
+      },
+
+      terminateBackground() {
+        return sp.sendQuery("SPExtensionTerminateBackground", { id });
+      },
+
+      wakeupBackground() {
+        return sp.sendQuery("SPExtensionWakeupBackground", { id });
       },
     };
 

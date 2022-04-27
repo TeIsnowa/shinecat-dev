@@ -25,11 +25,9 @@ module.exports = {
     "frame-script": require("../lib/environments/frame-script.js"),
     jsm: require("../lib/environments/jsm.js"),
     simpletest: require("../lib/environments/simpletest.js"),
+    sjs: require("../lib/environments/sjs.js"),
     privileged: require("../lib/environments/privileged.js"),
     xpcshell: require("../lib/environments/xpcshell.js"),
-  },
-  processors: {
-    ".xul": require("../lib/processors/xul"),
   },
   rules: {
     "avoid-Date-timing": require("../lib/rules/avoid-Date-timing"),
@@ -44,6 +42,7 @@ module.exports = {
     "mark-exported-symbols-as-used": require("../lib/rules/mark-exported-symbols-as-used"),
     "mark-test-function-used": require("../lib/rules/mark-test-function-used"),
     "no-aArgs": require("../lib/rules/no-aArgs"),
+    "no-addtask-setup": require("../lib/rules/no-addtask-setup"),
     "no-arbitrary-setTimeout": require("../lib/rules/no-arbitrary-setTimeout"),
     "no-compare-against-boolean-literals": require("../lib/rules/no-compare-against-boolean-literals"),
     "no-define-cc-etc": require("../lib/rules/no-define-cc-etc"),
@@ -67,6 +66,7 @@ module.exports = {
     "use-default-preference-values": require("../lib/rules/use-default-preference-values"),
     "use-ownerGlobal": require("../lib/rules/use-ownerGlobal"),
     "use-includes-instead-of-indexOf": require("../lib/rules/use-includes-instead-of-indexOf"),
+    "use-isInstance": require("./rules/use-isInstance"),
     "use-returnValue": require("../lib/rules/use-returnValue"),
     "use-services": require("../lib/rules/use-services"),
     "var-only-at-top-level": require("../lib/rules/var-only-at-top-level"),

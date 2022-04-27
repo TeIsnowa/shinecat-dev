@@ -20,8 +20,11 @@ add_task(async () => {
   await TestUtils.waitForCondition(async () => {
     profile = await Services.profiler.getProfileDataAsync();
     return (
-      profile.processes.filter(ps => ps.threads[0].processType === "utility")
-        .length === 1
+      // Search for process name to not be disturbed by other types of utility
+      // e.g. Utility AudioDecoder
+      profile.processes.filter(
+        ps => ps.threads[0].processName === "Utility Process"
+      ).length === 1
     );
   }, "Give time for the profiler to start and collect some samples");
 
@@ -30,10 +33,23 @@ add_task(async () => {
     p => p.threads[0].pid == utilityPid
   );
   Assert.notEqual(utilityProcessIndex, -1, "Could find index of utility");
+
   Assert.equal(
     profile.processes[utilityProcessIndex].threads[0].processType,
     "utility",
     "Profile has processType utility"
+  );
+
+  Assert.equal(
+    profile.processes[utilityProcessIndex].threads[0].name,
+    "GeckoMain",
+    "Profile has correct main thread name"
+  );
+
+  Assert.equal(
+    profile.processes[utilityProcessIndex].threads[0].processName,
+    "Utility Process",
+    "Profile has correct process name"
   );
 
   Assert.greater(

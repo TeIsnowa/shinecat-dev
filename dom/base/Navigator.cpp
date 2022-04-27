@@ -488,7 +488,12 @@ nsPluginArray* Navigator::GetPlugins(ErrorResult& aRv) {
   return mPlugins;
 }
 
-bool Navigator::PdfViewerEnabled() { return !StaticPrefs::pdfjs_disabled(); }
+bool Navigator::PdfViewerEnabled() {
+  // We ignore pdfjs.disabled when resisting fingerprinting.
+  // See bug 1756280 for an explanation.
+  return !StaticPrefs::pdfjs_disabled() ||
+         nsContentUtils::ShouldResistFingerprinting(GetDocShell());
+}
 
 Permissions* Navigator::GetPermissions(ErrorResult& aRv) {
   if (!mWindow) {
@@ -1801,7 +1806,9 @@ network::Connection* Navigator::GetConnection(ErrorResult& aRv) {
       aRv.Throw(NS_ERROR_UNEXPECTED);
       return nullptr;
     }
-    mConnection = network::Connection::CreateForWindow(mWindow);
+    nsCOMPtr<Document> doc = mWindow->GetExtantDoc();
+    mConnection = network::Connection::CreateForWindow(
+        mWindow, nsContentUtils::ShouldResistFingerprinting(doc));
   }
 
   return mConnection;
@@ -2118,9 +2125,7 @@ already_AddRefed<Promise> Navigator::RequestMediaKeySystemAccess(
   }
 
   RefPtr<DetailedPromise> promise = DetailedPromise::Create(
-      mWindow->AsGlobal(), aRv, "navigator.requestMediaKeySystemAccess"_ns,
-      Telemetry::VIDEO_EME_REQUEST_SUCCESS_LATENCY_MS,
-      Telemetry::VIDEO_EME_REQUEST_FAILURE_LATENCY_MS);
+      mWindow->AsGlobal(), aRv, "navigator.requestMediaKeySystemAccess"_ns);
   if (aRv.Failed()) {
     return nullptr;
   }

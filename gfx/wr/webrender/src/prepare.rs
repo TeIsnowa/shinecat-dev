@@ -21,7 +21,7 @@ use crate::frame_builder::{FrameBuildingContext, FrameBuildingState, PictureCont
 use crate::gpu_cache::{GpuCacheHandle, GpuDataRequest};
 use crate::gpu_types::{BrushFlags};
 use crate::internal_types::{FastHashMap, PlaneSplitAnchor};
-use crate::picture::{PicturePrimitive, SliceId, ClusterFlags, SurfaceRenderTasks};
+use crate::picture::{PicturePrimitive, SliceId, ClusterFlags};
 use crate::picture::{PrimitiveList, PrimitiveCluster, SurfaceIndex, TileCacheInstance, SubpixelMode, Picture3DContext};
 use crate::prim_store::line_dec::MAX_LINE_DECORATION_RESOLUTION;
 use crate::prim_store::*;
@@ -53,7 +53,7 @@ pub fn prepare_primitives(
     prim_instances: &mut Vec<PrimitiveInstance>,
 ) {
     profile_scope!("prepare_primitives");
-    for (cluster_index, cluster) in prim_list.clusters.iter_mut().enumerate() {
+    for cluster in &mut prim_list.clusters {
         if !cluster.flags.contains(ClusterFlags::IS_VISIBLE) {
             continue;
         }
@@ -64,65 +64,47 @@ pub fn prepare_primitives(
         );
 
         for prim_instance_index in cluster.prim_range() {
-            // First check for coarse visibility (if this primitive was completely off-screen)
-            let prim_instance = &mut prim_instances[prim_instance_index];
-            match prim_instance.vis.state {
-                VisibilityState::Unset => {
-                    panic!("bug: invalid vis state");
-                }
-                VisibilityState::Culled => {
+            if frame_state.surface_builder.is_prim_visible_and_in_dirty_region(&prim_instances[prim_instance_index].vis) {
+
+                let plane_split_anchor = PlaneSplitAnchor::new(
+                    cluster.spatial_node_index,
+                    PrimitiveInstanceIndex(prim_instance_index as u32),
+                );
+
+                if prepare_prim_for_render(
+                    store,
+                    prim_instance_index,
+                    cluster,
+                    pic_context,
+                    pic_state,
+                    frame_context,
+                    frame_state,
+                    plane_split_anchor,
+                    data_stores,
+                    scratch,
+                    tile_caches,
+                    prim_instances,
+                ) {
+                    // First check for coarse visibility (if this primitive was completely off-screen)
+                    let prim_instance = &mut prim_instances[prim_instance_index];
+
+                    frame_state.surface_builder.push_prim(
+                        PrimitiveInstanceIndex(prim_instance_index as u32),
+                        cluster.spatial_node_index,
+                        &prim_instance.vis,
+                        None,
+                        frame_state.cmd_buffers,
+                    );
+
+                    frame_state.num_visible_primitives += 1;
                     continue;
                 }
-                VisibilityState::Coarse { ref filter, vis_flags } => {
-                    // The original coarse state was calculated during the initial visibility pass.
-                    // However, it's possible that the dirty rect has got smaller, if tiles were not
-                    // dirty. Intersecting with the dirty rect here eliminates preparing any primitives
-                    // outside the dirty rect, and reduces the size of any off-screen surface allocations
-                    // for clip masks / render tasks that we make.
-
-                    // Clear the current visibiilty mask, and build a more detailed one based on the dirty rect
-                    // regions below.
-                    let dirty_region = frame_state.current_dirty_region();
-                    let is_in_dirty_region = dirty_region.filters
-                        .iter()
-                        .any(|region_filter| region_filter.matches(filter));
-
-                    if is_in_dirty_region {
-                        prim_instance.vis.state = VisibilityState::Detailed {
-                            filter: *filter,
-                            vis_flags,
-                        }
-                    } else {
-                        prim_instance.clear_visibility();
-                        continue;
-                    }
-                }
-                VisibilityState::Detailed { .. } => {
-                    // Was already set to detailed (picture caching disabled or a root element)
-                }
-                VisibilityState::PassThrough => {}
             }
 
-            let plane_split_anchor = PlaneSplitAnchor::new(cluster_index, prim_instance_index);
-
-            if prepare_prim_for_render(
-                store,
-                prim_instance_index,
-                cluster,
-                pic_context,
-                pic_state,
-                frame_context,
-                frame_state,
-                plane_split_anchor,
-                data_stores,
-                scratch,
-                tile_caches,
-                prim_instances,
-            ) {
-                frame_state.num_visible_primitives += 1;
-            } else {
-                prim_instances[prim_instance_index].clear_visibility();
-            }
+            // TODO(gw): Technically no need to clear visibility here, since from this point it
+            //           only matters if it got added to a command buffer. Kept here for now to
+            //           make debugging simpler, but perhaps we can remove / tidy this up.
+            prim_instances[prim_instance_index].clear_visibility();
         }
     }
 }
@@ -158,8 +140,6 @@ fn prepare_prim_for_render(
 
         match pic.take_context(
             pic_index,
-            pic_context.surface_spatial_node_index,
-            pic_context.raster_spatial_node_index,
             Some(pic_context.surface_index),
             pic_context.subpixel_mode,
             frame_state,
@@ -186,6 +166,8 @@ fn prepare_prim_for_render(
                     .restore_context(
                         prim_list,
                         pic_context_for_children,
+                        prim_instances,
+                        frame_context,
                         frame_state,
                     );
             }
@@ -330,7 +312,7 @@ fn prepare_interned_prim_for_render(
                     None,
                     false,
                     RenderTaskParent::Surface(pic_context.surface_index),
-                    frame_state.surfaces,
+                    &mut frame_state.surface_builder,
                     |rg_builder| {
                         rg_builder.add().init(RenderTask::new_dynamic(
                             task_size,
@@ -370,14 +352,13 @@ fn prepare_interned_prim_for_render(
             let allow_subpixel = match prim_instance.vis.state {
                 VisibilityState::Culled |
                 VisibilityState::Unset |
-                VisibilityState::Coarse { .. } |
                 VisibilityState::PassThrough => {
                     panic!("bug: invalid visibility state");
                 }
-                VisibilityState::Detailed { ref filter, .. } => {
+                VisibilityState::Visible { sub_slice_index, .. } => {
                     // For now, we only allow subpixel AA on primary sub-slices. In future we
                     // may support other sub-slices if we find content that does this.
-                    if filter.sub_slice_index.is_primary() {
+                    if sub_slice_index.is_primary() {
                         match pic_context.subpixel_mode {
                             SubpixelMode::Allow => true,
                             SubpixelMode::Deny => false,
@@ -484,7 +465,7 @@ fn prepare_interned_prim_for_render(
                     None,
                     false,          // TODO(gw): We don't calculate opacity for borders yet!
                     RenderTaskParent::Surface(pic_context.surface_index),
-                    frame_state.surfaces,
+                    &mut frame_state.surface_builder,
                     |rg_builder| {
                         rg_builder.add().init(RenderTask::new_dynamic(
                             cache_size,
@@ -772,7 +753,6 @@ fn prepare_interned_prim_for_render(
             let pic = &mut store.pictures[pic_index.0];
 
             if pic.prepare_for_render(
-                frame_context,
                 frame_state,
                 data_stores,
             ) {
@@ -781,7 +761,7 @@ fn prepare_interned_prim_for_render(
                     let splitter = &mut frame_state.plane_splitters[plane_splitter_index.0];
                     let surface_index = pic.raster_config.as_ref().unwrap().surface_index;
                     let surface = &frame_state.surfaces[surface_index.0];
-                    let local_prim_rect = surface.local_rect.cast_unit();
+                    let local_prim_rect = surface.clipped_local_rect.cast_unit();
 
                     PicturePrimitive::add_split_plane(
                         splitter,
@@ -820,31 +800,10 @@ fn prepare_interned_prim_for_render(
                 prim_instance.clear_visibility();
             }
         }
-        PrimitiveInstanceKind::Backdrop { data_handle } => {
-            profile_scope!("Backdrop");
-            let backdrop_pic_index = data_stores.backdrop[*data_handle].kind.pic_index;
-
-            // Setup a dependency on the backdrop picture to ensure it is rendered prior to rendering this primitive.
-            let backdrop_surface_index = store.pictures[backdrop_pic_index.0].raster_config.as_ref().unwrap().surface_index;
-            if let Some(ref backdrop_tasks) = frame_state.surfaces[backdrop_surface_index.0].render_tasks {
-                // This is untidy / code duplication but matches existing behavior and will be
-                // removed in follow up patches to this bug to rework how backdrop-filter works.
-                let backdrop_task_id = match backdrop_tasks {
-                    SurfaceRenderTasks::Tiled(..) => unreachable!(),
-                    SurfaceRenderTasks::Simple(id) => *id,
-                    SurfaceRenderTasks::Chained { port_task_id, .. } => *port_task_id,
-                };
-
-                frame_state.add_child_render_task(
-                    pic_context.surface_index,
-                    backdrop_task_id,
-                );
-            } else {
-                if prim_instance.is_chased() {
-                    info!("\tBackdrop primitive culled because backdrop task was not assigned render tasks");
-                }
-                prim_instance.clear_visibility();
-            }
+        PrimitiveInstanceKind::Backdrop { .. } => {
+            // Register the owner picture of this backdrop primitive as the
+            // target for resolve of the sub-graph
+            frame_state.surface_builder.register_resolve_source();
         }
     };
 }
@@ -1193,7 +1152,7 @@ pub fn update_clip_task(
             &mut data_stores.clip,
             device_pixel_scale,
             frame_context.fb_config,
-            frame_state.surfaces,
+            &mut frame_state.surface_builder,
         );
         if instance.is_chased() {
             info!("\tcreated task {:?} with device rect {:?}",
@@ -1203,9 +1162,9 @@ pub fn update_clip_task(
         let clip_task_index = ClipTaskIndex(scratch.clip_mask_instances.len() as _);
         scratch.clip_mask_instances.push(ClipMaskKind::Mask(clip_task_id));
         instance.vis.clip_task_index = clip_task_index;
-        frame_state.add_child_render_task(
-            pic_context.surface_index,
+        frame_state.surface_builder.add_child_render_task(
             clip_task_id,
+            frame_state.rg_builder,
         );
         clip_task_index
     } else {
@@ -1260,12 +1219,12 @@ pub fn update_brush_segment_clip_task(
         clip_data_store,
         device_pixel_scale,
         frame_context.fb_config,
-        frame_state.surfaces,
+        &mut frame_state.surface_builder,
     );
 
-    frame_state.add_child_render_task(
-        surface_index,
+    frame_state.surface_builder.add_child_render_task(
         clip_task_id,
+        frame_state.rg_builder,
     );
     ClipMaskKind::Mask(clip_task_id)
 }

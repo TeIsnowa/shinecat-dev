@@ -83,6 +83,9 @@ using mozilla::FilePreferences::kPathSeparator;
 #ifndef ERROR_DEVICE_HARDWARE_ERROR
 #  define ERROR_DEVICE_HARDWARE_ERROR 483L
 #endif
+#ifndef ERROR_CONTENT_BLOCKED
+#  define ERROR_CONTENT_BLOCKED 1296L
+#endif
 
 namespace {
 
@@ -261,6 +264,8 @@ static nsresult ConvertWinError(DWORD aWinErr) {
     case ERROR_NOT_SAME_DEVICE:
       [[fallthrough]];  // to NS_ERROR_FILE_ACCESS_DENIED
     case ERROR_CANNOT_MAKE:
+      [[fallthrough]];  // to NS_ERROR_FILE_ACCESS_DENIED
+    case ERROR_CONTENT_BLOCKED:
       rv = NS_ERROR_FILE_ACCESS_DENIED;
       break;
     case ERROR_SHARING_VIOLATION:  // CreateFile without sharing flags
@@ -332,20 +337,6 @@ static nsresult ConvertWinError(DWORD aWinErr) {
       break;
   }
   return rv;
-}
-
-// as suggested in the MSDN documentation on SetFilePointer
-static __int64 MyFileSeek64(HANDLE aHandle, __int64 aDistance,
-                            DWORD aMoveMethod) {
-  LARGE_INTEGER li;
-
-  li.QuadPart = aDistance;
-  li.LowPart = SetFilePointer(aHandle, li.LowPart, &li.HighPart, aMoveMethod);
-  if (li.LowPart == INVALID_SET_FILE_POINTER && GetLastError() != NO_ERROR) {
-    li.QuadPart = -1;
-  }
-
-  return li.QuadPart;
 }
 
 // Check whether a path is a volume root. Expects paths to be \-terminated.
@@ -2298,6 +2289,11 @@ nsLocalFile::Remove(bool aRecursive) {
 
   if (isDir) {
     if (aRecursive) {
+      // WARNING: neither the `SHFileOperation` nor `IFileOperation` APIs are
+      // appropriate here as neither handle long path names, i.e. paths prefixed
+      // with `\\?\` or longer than 260 characters on Windows 10+ system with
+      // long paths enabled.
+
       RefPtr<nsDirEnumerator> dirEnum = new nsDirEnumerator();
 
       rv = dirEnum->Init(this);
@@ -2305,14 +2301,9 @@ nsLocalFile::Remove(bool aRecursive) {
         return rv;
       }
 
-      bool more = false;
-      while (NS_SUCCEEDED(dirEnum->HasMoreElements(&more)) && more) {
-        nsCOMPtr<nsISupports> item;
-        dirEnum->GetNext(getter_AddRefs(item));
-        nsCOMPtr<nsIFile> file = do_QueryInterface(item);
-        if (file) {
-          file->Remove(aRecursive);
-        }
+      nsCOMPtr<nsIFile> file;
+      while (NS_SUCCEEDED(dirEnum->GetNextFile(getter_AddRefs(file))) && file) {
+        file->Remove(aRecursive);
       }
     }
     if (RemoveDirectoryW(mWorkingPath.get()) == 0) {
@@ -2641,8 +2632,10 @@ nsLocalFile::SetFileSize(int64_t aFileSize) {
   // seek the file pointer to the new, desired end of file
   // and then truncate the file at that position
   nsresult rv = NS_ERROR_FAILURE;
-  aFileSize = MyFileSeek64(hFile, aFileSize, FILE_BEGIN);
-  if (aFileSize != -1 && SetEndOfFile(hFile)) {
+  LARGE_INTEGER distance;
+  distance.QuadPart = aFileSize;
+  if (SetFilePointerEx(hFile, distance, nullptr, FILE_BEGIN) &&
+      SetEndOfFile(hFile)) {
     MakeDirty();
     rv = NS_OK;
   }
@@ -3075,8 +3068,8 @@ nsLocalFile::Contains(nsIFile* aInFile, bool* aResult) {
     aInFile->GetPath(inFilePath);
   }
 
-  // make sure that the |aInFile|'s path has a trailing separator.
-  if (inFilePath.Length() >= myFilePathLen &&
+  // Make sure that the |aInFile|'s path has a trailing separator.
+  if (inFilePath.Length() > myFilePathLen &&
       inFilePath[myFilePathLen] == L'\\') {
     if (_wcsnicmp(myFilePath.get(), inFilePath.get(), myFilePathLen) == 0) {
       *aResult = true;
@@ -3440,14 +3433,6 @@ nsCString nsIFile::HumanReadablePath() {
   DebugOnly<nsresult> rv = GetPath(path);
   MOZ_ASSERT(NS_SUCCEEDED(rv));
   return NS_ConvertUTF16toUTF8(path);
-}
-
-NS_IMETHODIMP
-nsLocalFile::GetNativeCanonicalPath(nsACString& aResult) {
-  NS_WARNING("This method is lossy. Use GetCanonicalPath !");
-  EnsureShortPath();
-  NS_CopyUnicodeToNative(mShortWorkingPath, aResult);
-  return NS_OK;
 }
 
 NS_IMETHODIMP

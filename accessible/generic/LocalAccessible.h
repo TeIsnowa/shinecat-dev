@@ -53,7 +53,9 @@ class RemoteAccessible;
 class Relation;
 class RootAccessible;
 class TableAccessible;
+class TableAccessibleBase;
 class TableCellAccessible;
+class TableCellAccessibleBase;
 class TextLeafAccessible;
 class XULLabelAccessible;
 class XULTreeAccessible;
@@ -103,6 +105,9 @@ class LocalAccessible : public nsISupports, public Accessible {
 
   /**
    * Return frame for this accessible.
+   * Note that this will return null for display: contents. Also,
+   * DocAccessible::GetFrame can return null if the frame tree hasn't been
+   * created yet.
    */
   virtual nsIFrame* GetFrame() const;
 
@@ -121,8 +126,14 @@ class LocalAccessible : public nsISupports, public Accessible {
 
   /**
    * Return the unique identifier of the accessible.
+   * ID() should be preferred, but this method still exists because many
+   * LocalAccessible callers expect a void*.
    */
   void* UniqueID() { return static_cast<void*>(this); }
+
+  virtual uint64_t ID() const override {
+    return reinterpret_cast<uintptr_t>(this);
+  }
 
   /**
    * Return language associated with the accessible.
@@ -350,10 +361,7 @@ class LocalAccessible : public nsISupports, public Accessible {
     return childCount != 0 ? LocalChildAt(childCount - 1) : nullptr;
   }
 
-  /**
-   * Return embedded accessible children count.
-   */
-  uint32_t EmbeddedChildCount();
+  virtual uint32_t EmbeddedChildCount() override;
 
   /**
    * Return embedded accessible child at the given index.
@@ -416,6 +424,9 @@ class LocalAccessible : public nsISupports, public Accessible {
 
   /**
    * Return boundaries rect relative to the frame of the parent accessible.
+   * The returned bounds are the same regardless of whether the parent is
+   * scrolled. This means the scroll position must be later subtracted to
+   * calculate absolute coordinates.
    */
   virtual nsRect ParentRelativeBounds();
 
@@ -434,11 +445,8 @@ class LocalAccessible : public nsISupports, public Accessible {
    */
   MOZ_CAN_RUN_SCRIPT_BOUNDARY virtual void TakeFocus() const override;
 
-  /**
-   * Scroll the accessible into view.
-   */
   MOZ_CAN_RUN_SCRIPT
-  virtual void ScrollTo(uint32_t aHow) const;
+  virtual void ScrollTo(uint32_t aHow) const override;
 
   /**
    * Scroll the accessible to the given point.
@@ -490,6 +498,9 @@ class LocalAccessible : public nsISupports, public Accessible {
   const TableCellAccessible* AsTableCell() const {
     return const_cast<LocalAccessible*>(this)->AsTableCell();
   }
+
+  virtual TableAccessibleBase* AsTableBase() override;
+  virtual TableCellAccessibleBase* AsTableCellBase() override;
 
   TextLeafAccessible* AsTextLeaf();
 
@@ -553,12 +564,6 @@ class LocalAccessible : public nsISupports, public Accessible {
    * Returns an anchor URI at the given index.
    */
   virtual already_AddRefed<nsIURI> AnchorURIAt(uint32_t aAnchorIndex) const;
-
-  /**
-   * Returns a text point for the accessible element.
-   */
-  void ToTextPoint(HyperTextAccessible** aContainer, int32_t* aOffset,
-                   bool aIsBefore = true) const;
 
   //////////////////////////////////////////////////////////////////////////////
   // SelectAccessible
@@ -787,6 +792,10 @@ class LocalAccessible : public nsISupports, public Accessible {
 
   virtual already_AddRefed<nsAtom> DisplayStyle() const override;
 
+  virtual Maybe<float> Opacity() const override;
+
+  virtual void DOMNodeID(nsString& aID) const override;
+
  protected:
   virtual ~LocalAccessible();
 
@@ -861,8 +870,11 @@ class LocalAccessible : public nsISupports, public Accessible {
     eRelocated = 1 << 7,         // accessible was moved in tree
     eNoKidsFromDOM = 1 << 8,     // accessible doesn't allow children from DOM
     eHasTextKids = 1 << 9,       // accessible have a text leaf in children
+    eOldFrameHasValidTransformStyle =
+        1 << 10,  // frame prior to most recent style change both has transform
+                  // styling and supports transforms
 
-    eLastStateFlag = eHasTextKids
+    eLastStateFlag = eOldFrameHasValidTransformStyle
   };
 
   /**
@@ -1045,6 +1057,13 @@ class LocalAccessible : public nsISupports, public Accessible {
   LocalAccessible() = delete;
   LocalAccessible(const LocalAccessible&) = delete;
   LocalAccessible& operator=(const LocalAccessible&) = delete;
+
+  /**
+   * Traverses the accessible's parent chain in search of an accessible with
+   * a frame. Returns the frame when found. Includes special handling for
+   * OOP iframe docs and tab documents.
+   */
+  nsIFrame* FindNearestAccessibleAncestorFrame();
 };
 
 NS_DEFINE_STATIC_IID_ACCESSOR(LocalAccessible, NS_ACCESSIBLE_IMPL_IID)

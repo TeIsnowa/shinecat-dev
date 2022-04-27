@@ -55,6 +55,8 @@ class MediaController;
 struct LoadingSessionHistoryInfo;
 class SSCacheCopy;
 class WindowGlobalParent;
+class SessionStoreFormData;
+class SessionStoreScrollData;
 
 // CanonicalBrowsingContext is a BrowsingContext living in the parent
 // process, with whatever extra data that a BrowsingContext in the
@@ -127,8 +129,7 @@ class CanonicalBrowsingContext final : public BrowsingContext {
       nsDocShellLoadState* aLoadState, nsIChannel* aChannel);
 
   UniquePtr<LoadingSessionHistoryInfo> ReplaceLoadingSessionHistoryEntryForLoad(
-      LoadingSessionHistoryInfo* aInfo, nsIChannel* aOldChannel,
-      nsIChannel* aNewChannel);
+      LoadingSessionHistoryInfo* aInfo, nsIChannel* aNewChannel);
 
   already_AddRefed<Promise> Print(nsIPrintSettings* aPrintSettings,
                                   ErrorResult& aRv);
@@ -323,6 +324,8 @@ class CanonicalBrowsingContext final : public BrowsingContext {
   }
 
   void SetTouchEventsOverride(dom::TouchEventsOverride, ErrorResult& aRv);
+  void SetTargetTopLevelLinkClicksToBlank(bool aTargetTopLevelLinkClicksToBlank,
+                                          ErrorResult& aRv);
 
   bool IsReplaced() const { return mIsReplaced; }
 
@@ -522,6 +525,17 @@ class CanonicalBrowsingContext final : public BrowsingContext {
   RefPtr<nsBrowserStatusFilter> mStatusFilter;
 
   RefPtr<FeaturePolicy> mContainerFeaturePolicy;
+
+  friend class BrowserSessionStore;
+  WeakPtr<SessionStoreFormData>& GetSessionStoreFormDataRef() {
+    return mFormdata;
+  }
+  WeakPtr<SessionStoreScrollData>& GetSessionStoreScrollDataRef() {
+    return mScroll;
+  }
+
+  WeakPtr<SessionStoreFormData> mFormdata;
+  WeakPtr<SessionStoreScrollData> mScroll;
 
   RefPtr<RestoreState> mRestoreState;
 

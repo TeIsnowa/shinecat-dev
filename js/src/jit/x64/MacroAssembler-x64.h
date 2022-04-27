@@ -10,7 +10,6 @@
 #include "jit/x86-shared/MacroAssembler-x86-shared.h"
 #include "js/HeapAPI.h"
 #include "wasm/WasmBuiltins.h"
-#include "wasm/WasmTlsData.h"
 
 namespace js {
 namespace jit {
@@ -1059,6 +1058,10 @@ class MacroAssemblerX64 : public MacroAssemblerX86Shared {
                      FloatRegister dest);
   void vmulpdSimd128(const SimdConstant& v, FloatRegister lhs,
                      FloatRegister dest);
+  void vandpdSimd128(const SimdConstant& v, FloatRegister lhs,
+                     FloatRegister dest);
+  void vminpdSimd128(const SimdConstant& v, FloatRegister lhs,
+                     FloatRegister dest);
   void vpacksswbSimd128(const SimdConstant& v, FloatRegister lhs,
                         FloatRegister dest);
   void vpackuswbSimd128(const SimdConstant& v, FloatRegister lhs,
@@ -1066,6 +1069,10 @@ class MacroAssemblerX64 : public MacroAssemblerX86Shared {
   void vpackssdwSimd128(const SimdConstant& v, FloatRegister lhs,
                         FloatRegister dest);
   void vpackusdwSimd128(const SimdConstant& v, FloatRegister lhs,
+                        FloatRegister dest);
+  void vpunpckldqSimd128(const SimdConstant& v, FloatRegister lhs,
+                         FloatRegister dest);
+  void vunpcklpsSimd128(const SimdConstant& v, FloatRegister lhs,
                         FloatRegister dest);
   void vpshufbSimd128(const SimdConstant& v, FloatRegister lhs,
                       FloatRegister dest);

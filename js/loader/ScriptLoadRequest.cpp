@@ -32,19 +32,18 @@ namespace JS::loader {
 // ScriptFetchOptions
 //////////////////////////////////////////////////////////////
 
-NS_IMPL_CYCLE_COLLECTION(ScriptFetchOptions, mTriggeringPrincipal,
-                         mWebExtGlobal)
+NS_IMPL_CYCLE_COLLECTION(ScriptFetchOptions, mTriggeringPrincipal, mElement)
 
 NS_IMPL_CYCLE_COLLECTION_ROOT_NATIVE(ScriptFetchOptions, AddRef)
 NS_IMPL_CYCLE_COLLECTION_UNROOT_NATIVE(ScriptFetchOptions, Release)
 
 ScriptFetchOptions::ScriptFetchOptions(
     mozilla::CORSMode aCORSMode, mozilla::dom::ReferrerPolicy aReferrerPolicy,
-    nsIPrincipal* aTriggeringPrincipal, nsIGlobalObject* aWebExtGlobal)
+    nsIPrincipal* aTriggeringPrincipal, mozilla::dom::Element* aElement)
     : mCORSMode(aCORSMode),
       mReferrerPolicy(aReferrerPolicy),
       mTriggeringPrincipal(aTriggeringPrincipal),
-      mWebExtGlobal(aWebExtGlobal) {
+      mElement(aElement) {
   MOZ_ASSERT(mTriggeringPrincipal);
 }
 
@@ -64,7 +63,7 @@ NS_IMPL_CYCLE_COLLECTION_CLASS(ScriptLoadRequest)
 
 NS_IMPL_CYCLE_COLLECTION_UNLINK_BEGIN(ScriptLoadRequest)
   NS_IMPL_CYCLE_COLLECTION_UNLINK(mFetchOptions, mCacheInfo, mLoadContext)
-  tmp->mScript = nullptr;
+  tmp->mScriptForBytecodeEncoding = nullptr;
   tmp->DropBytecodeCacheReferences();
 NS_IMPL_CYCLE_COLLECTION_UNLINK_END
 
@@ -73,17 +72,17 @@ NS_IMPL_CYCLE_COLLECTION_TRAVERSE_BEGIN(ScriptLoadRequest)
 NS_IMPL_CYCLE_COLLECTION_TRAVERSE_END
 
 NS_IMPL_CYCLE_COLLECTION_TRACE_BEGIN(ScriptLoadRequest)
-  NS_IMPL_CYCLE_COLLECTION_TRACE_JS_MEMBER_CALLBACK(mScript)
+  NS_IMPL_CYCLE_COLLECTION_TRACE_JS_MEMBER_CALLBACK(mScriptForBytecodeEncoding)
 NS_IMPL_CYCLE_COLLECTION_TRACE_END
 
 ScriptLoadRequest::ScriptLoadRequest(ScriptKind aKind, nsIURI* aURI,
                                      ScriptFetchOptions* aFetchOptions,
                                      const SRIMetadata& aIntegrity,
                                      nsIURI* aReferrer,
-                                     mozilla::dom::ScriptLoadContext* aContext)
+                                     LoadContextBase* aContext)
     : mKind(aKind),
-      mIsCanceled(false),
-      mProgress(Progress::eLoading),
+      mState(State::Fetching),
+      mFetchSourceOnly(false),
       mDataType(DataType::eUnknown),
       mFetchOptions(aFetchOptions),
       mIntegrity(aIntegrity),
@@ -100,7 +99,7 @@ ScriptLoadRequest::ScriptLoadRequest(ScriptKind aKind, nsIURI* aURI,
 }
 
 ScriptLoadRequest::~ScriptLoadRequest() {
-  if (mScript) {
+  if (IsMarkedForBytecodeEncoding()) {
     DropBytecodeCacheReferences();
   }
   mLoadContext = nullptr;
@@ -108,14 +107,14 @@ ScriptLoadRequest::~ScriptLoadRequest() {
 }
 
 void ScriptLoadRequest::SetReady() {
-  MOZ_ASSERT(mProgress != Progress::eReady);
-  mProgress = Progress::eReady;
+  MOZ_ASSERT(!IsReadyToRun());
+  mState = State::Ready;
 }
 
 void ScriptLoadRequest::Cancel() {
-  mIsCanceled = true;
+  mState = State::Canceled;
   if (HasLoadContext()) {
-    GetLoadContext()->MaybeCancelOffThreadScript();
+    GetScriptLoadContext()->MaybeCancelOffThreadScript();
   }
 }
 
@@ -124,9 +123,19 @@ void ScriptLoadRequest::DropBytecodeCacheReferences() {
   DropJSObjects(this);
 }
 
+mozilla::dom::ScriptLoadContext* ScriptLoadRequest::GetScriptLoadContext() {
+  MOZ_ASSERT(mLoadContext);
+  return mLoadContext->AsWindowContext();
+}
+
 ModuleLoadRequest* ScriptLoadRequest::AsModuleRequest() {
   MOZ_ASSERT(IsModuleRequest());
   return static_cast<ModuleLoadRequest*>(this);
+}
+
+const ModuleLoadRequest* ScriptLoadRequest::AsModuleRequest() const {
+  MOZ_ASSERT(IsModuleRequest());
+  return static_cast<const ModuleLoadRequest*>(this);
 }
 
 void ScriptLoadRequest::SetBytecode() {
@@ -140,18 +149,27 @@ void ScriptLoadRequest::ClearScriptSource() {
   }
 }
 
-void ScriptLoadRequest::SetScript(JSScript* aScript) {
-  MOZ_ASSERT(!mScript);
-  mScript = aScript;
+void ScriptLoadRequest::MarkForBytecodeEncoding(JSScript* aScript) {
+  MOZ_ASSERT(!IsModuleRequest());
+  MOZ_ASSERT(!IsMarkedForBytecodeEncoding());
+  mScriptForBytecodeEncoding = aScript;
   HoldJSObjects(this);
+}
+
+bool ScriptLoadRequest::IsMarkedForBytecodeEncoding() const {
+  if (IsModuleRequest()) {
+    return AsModuleRequest()->IsModuleMarkedForBytecodeEncoding();
+  }
+
+  return !!mScriptForBytecodeEncoding;
 }
 
 nsresult ScriptLoadRequest::GetScriptSource(JSContext* aCx,
                                             MaybeSourceText* aMaybeSource) {
   // If there's no script text, we try to get it from the element
-  if (HasLoadContext() && GetLoadContext()->mIsInline) {
+  if (HasLoadContext() && GetScriptLoadContext()->mIsInline) {
     nsAutoString inlineData;
-    GetLoadContext()->GetScriptElement()->GetScriptText(inlineData);
+    GetScriptLoadContext()->GetScriptElement()->GetScriptText(inlineData);
 
     size_t nbytes = inlineData.Length() * sizeof(char16_t);
     JS::UniqueTwoByteChars chars(

@@ -15,10 +15,6 @@
 #include "nsCycleCollectionParticipant.h"
 #include "nsWrapperCache.h"
 
-#ifndef MOZ_DOM_STREAMS
-#  error "Shouldn't be compiling with this header without MOZ_DOM_STREAMS set"
-#endif
-
 namespace mozilla::dom {
 
 class WritableStream;
@@ -29,14 +25,32 @@ class TransformStream final : public nsISupports, public nsWrapperCache {
   NS_DECL_CYCLE_COLLECTING_ISUPPORTS
   NS_DECL_CYCLE_COLLECTION_SCRIPT_HOLDER_CLASS(TransformStream)
 
-  TransformStreamDefaultController* Controller() { return mController; }
-  void SetController(TransformStreamDefaultController* aController) {
-    mController = aController;
+  // Internal slot accessors
+  bool Backpressure() const { return mBackpressure; }
+  void SetBackpressure(bool aBackpressure) { mBackpressure = aBackpressure; }
+  Promise* BackpressureChangePromise() { return mBackpressureChangePromise; }
+  void SetBackpressureChangePromise(Promise* aPromise) {
+    mBackpressureChangePromise = aPromise;
   }
+  MOZ_KNOWN_LIVE TransformStreamDefaultController* Controller() {
+    return mController;
+  }
+  void SetController(TransformStreamDefaultController& aController) {
+    MOZ_ASSERT(!mController);
+    mController = &aController;
+  }
+  MOZ_KNOWN_LIVE ReadableStream* Readable() { return mReadable; }
+  MOZ_KNOWN_LIVE WritableStream* Writable() { return mWritable; }
 
  protected:
   ~TransformStream();
   explicit TransformStream(nsIGlobalObject* aGlobal);
+
+  MOZ_CAN_RUN_SCRIPT void Initialize(
+      JSContext* aCx, Promise* aStartPromise, double aWritableHighWaterMark,
+      QueuingStrategySize* aWritableSizeAlgorithm,
+      double aReadableHighWaterMark,
+      QueuingStrategySize* aReadableSizeAlgorithm, ErrorResult& aRv);
 
  public:
   nsIGlobalObject* GetParentObject() const { return mGlobal; }
@@ -51,15 +65,32 @@ class TransformStream final : public nsISupports, public nsWrapperCache {
               const QueuingStrategy& aWritableStrategy,
               const QueuingStrategy& aReadableStrategy, ErrorResult& aRv);
 
-  already_AddRefed<ReadableStream> GetReadable(ErrorResult& aRv);
-  already_AddRefed<WritableStream> GetWritable(ErrorResult& aRv);
+  already_AddRefed<ReadableStream> GetReadable();
+  already_AddRefed<WritableStream> GetWritable();
 
  private:
   nsCOMPtr<nsIGlobalObject> mGlobal;
 
   // Internal slots
-  RefPtr<TransformStreamDefaultController> mController;
+  // MOZ_KNOWN_LIVE for slots that will never be reassigned
+  bool mBackpressure = false;
+  RefPtr<Promise> mBackpressureChangePromise;
+  MOZ_KNOWN_LIVE RefPtr<TransformStreamDefaultController> mController;
+  MOZ_KNOWN_LIVE RefPtr<ReadableStream> mReadable;
+  MOZ_KNOWN_LIVE RefPtr<WritableStream> mWritable;
 };
+
+MOZ_CAN_RUN_SCRIPT void TransformStreamErrorWritableAndUnblockWrite(
+    JSContext* aCx, TransformStream* aStream, JS::HandleValue aError,
+    ErrorResult& aRv);
+
+MOZ_CAN_RUN_SCRIPT void TransformStreamError(JSContext* aCx,
+                                             TransformStream* aStream,
+                                             JS::HandleValue aError,
+                                             ErrorResult& aRv);
+
+void TransformStreamSetBackpressure(TransformStream* aStream,
+                                    bool aBackpressure, ErrorResult& aRv);
 
 }  // namespace mozilla::dom
 

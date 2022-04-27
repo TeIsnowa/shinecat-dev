@@ -22,6 +22,12 @@ Services.scriptloader.loadSubScript(
   this
 );
 
+/* import-globals-from ./shared-head.js */
+Services.scriptloader.loadSubScript(
+  "chrome://mochitests/content/browser/devtools/client/webconsole/test/browser/shared-head.js",
+  this
+);
+
 var {
   BrowserConsoleManager,
 } = require("devtools/client/webconsole/browser-console-manager");
@@ -348,6 +354,7 @@ function findMessages(hud, text, selector = ".message") {
   );
   return elements;
 }
+
 /**
  * Wait for a message to be logged and ensure it is logged only once.
  *
@@ -363,8 +370,8 @@ async function checkUniqueMessageExists(hud, msg, selector) {
   info(`Checking "${msg}" was logged`);
   let messages;
   try {
-    messages = await waitFor(() => {
-      const msgs = findMessages(hud, msg, selector);
+    messages = await waitFor(async () => {
+      const msgs = await findMessagesVirtualized({ hud, text: msg, selector });
       return msgs.length > 0 ? msgs : null;
     });
   } catch (e) {
@@ -498,14 +505,12 @@ async function testOpenInDebugger(
 ) {
   info(`Finding message for open-in-debugger test; text is "${text}"`);
   const messageNode = await waitFor(() => findMessage(hud, text));
-  const frameLinkNode = messageNode.querySelector(
-    ".message-location .frame-link"
-  );
-  ok(frameLinkNode, "The message does have a location link");
+  const locationNode = messageNode.querySelector(".message-location");
+  ok(locationNode, "The message does have a location link");
   await checkClickOnNode(
     hud,
     toolbox,
-    frameLinkNode,
+    locationNode,
     expectUrl,
     expectLine,
     expectColumn,
@@ -1518,8 +1523,8 @@ function isScrolledToBottom(container) {
  *                        Start the string with "|︎ " to indicate that the message is
  *                        inside a group and should be indented.
  */
-function checkConsoleOutputForWarningGroup(hud, expectedMessages) {
-  const messages = findMessages(hud, "");
+async function checkConsoleOutputForWarningGroup(hud, expectedMessages) {
+  const messages = await findAllMessagesVirtualized(hud);
   is(
     messages.length,
     expectedMessages.length,
@@ -1542,8 +1547,12 @@ function checkConsoleOutputForWarningGroup(hud, expectedMessages) {
     return groups[0].startsWith("▶︎⚠") || groups[0].startsWith("▼⚠");
   };
 
-  expectedMessages.forEach((expectedMessage, i) => {
-    const message = messages[i];
+  for (let [i, expectedMessage] of expectedMessages.entries()) {
+    // Refresh the reference to the message, as it may have been scrolled out of existence.
+    const message = await findMessageVirtualized({
+      hud,
+      messageId: messages[i].getAttribute("data-message-id"),
+    });
     info(`Checking "${expectedMessage}"`);
 
     // Collapsed Warning group
@@ -1554,7 +1563,7 @@ function checkConsoleOutputForWarningGroup(hud, expectedMessages) {
         "There's a collapsed arrow"
       );
       is(
-        message.querySelector(".indent").getAttribute("data-indent"),
+        message.getAttribute("data-indent"),
         "0",
         "The warningGroup has the expected indent"
       );
@@ -1569,7 +1578,7 @@ function checkConsoleOutputForWarningGroup(hud, expectedMessages) {
         "There's an expanded arrow"
       );
       is(
-        message.querySelector(".indent").getAttribute("data-indent"),
+        message.getAttribute("data-indent"),
         "0",
         "The warningGroup has the expected indent"
       );
@@ -1600,9 +1609,7 @@ function checkConsoleOutputForWarningGroup(hud, expectedMessages) {
     if (expectedMessage.startsWith("|")) {
       if (isInWarningGroup(i)) {
         is(
-          message
-            .querySelector(".indent.warning-indent")
-            .getAttribute("data-indent"),
+          message.getAttribute("data-indent"),
           "1",
           "The message has the expected indent"
         );
@@ -1611,7 +1618,7 @@ function checkConsoleOutputForWarningGroup(hud, expectedMessages) {
       expectedMessage = expectedMessage.replace("| ", "");
     } else {
       is(
-        message.querySelector(".indent").getAttribute("data-indent"),
+        message.getAttribute("data-indent"),
         "0",
         "The message has the expected indent"
       );
@@ -1622,7 +1629,7 @@ function checkConsoleOutputForWarningGroup(hud, expectedMessages) {
       `Message includes ` +
         `the expected "${expectedMessage}" content - "${message.textContent.trim()}"`
     );
-  });
+  }
 }
 
 /**

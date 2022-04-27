@@ -7,8 +7,10 @@
 #ifndef js_loader_ModuleLoadRequest_h
 #define js_loader_ModuleLoadRequest_h
 
+#include "LoadContextBase.h"
 #include "ScriptLoadRequest.h"
 #include "ModuleLoaderBase.h"
+#include "mozilla/Assertions.h"
 #include "mozilla/MozPromise.h"
 #include "js/RootingAPI.h"
 #include "js/Value.h"
@@ -51,7 +53,7 @@ class ModuleLoadRequest final : public ScriptLoadRequest {
 
   ModuleLoadRequest(nsIURI* aURI, ScriptFetchOptions* aFetchOptions,
                     const SRIMetadata& aIntegrity, nsIURI* aReferrer,
-                    mozilla::dom::ScriptLoadContext* aContext, bool aIsTopLevel,
+                    LoadContextBase* aContext, bool aIsTopLevel,
                     bool aIsDynamicImport, ModuleLoaderBase* aLoader,
                     VisitedURLSet* aVisitedSet, ModuleLoadRequest* aRootModule);
 
@@ -60,6 +62,8 @@ class ModuleLoadRequest final : public ScriptLoadRequest {
   bool IsTopLevel() const override { return mIsTopLevel; }
 
   bool IsDynamicImport() const { return mIsDynamicImport; }
+
+  nsIGlobalObject* GetGlobalObject();
 
   void SetReady() override;
   void Cancel() override;
@@ -77,6 +81,37 @@ class ModuleLoadRequest final : public ScriptLoadRequest {
     return mRootModule;
   }
 
+  bool IsModuleMarkedForBytecodeEncoding() const {
+    return mIsMarkedForBytecodeEncoding;
+  }
+  void MarkModuleForBytecodeEncoding() {
+    MOZ_ASSERT(!IsModuleMarkedForBytecodeEncoding());
+    mIsMarkedForBytecodeEncoding = true;
+  }
+
+  // Convenience methods to call into the module loader for this request.
+
+  void CancelDynamicImport(nsresult aResult) {
+    MOZ_ASSERT(IsDynamicImport());
+    mLoader->CancelDynamicImport(this, aResult);
+  }
+#ifdef DEBUG
+  bool IsRegisteredDynamicImport() const {
+    return IsDynamicImport() && mLoader->HasDynamicImport(this);
+  }
+#endif
+  nsresult StartModuleLoad() { return mLoader->StartModuleLoad(this); }
+  nsresult RestartModuleLoad() { return mLoader->RestartModuleLoad(this); }
+  nsresult OnFetchComplete(nsresult aRv) {
+    return mLoader->OnFetchComplete(this, aRv);
+  }
+  bool InstantiateModuleGraph() {
+    return mLoader->InstantiateModuleGraph(this);
+  }
+  nsresult EvaluateModule() { return mLoader->EvaluateModule(this); }
+  void StartDynamicImport() { mLoader->StartDynamicImport(this); }
+  void ProcessDynamicImport() { mLoader->ProcessDynamicImport(this); }
+
  private:
   void LoadFinished();
   void CancelImports();
@@ -89,12 +124,17 @@ class ModuleLoadRequest final : public ScriptLoadRequest {
   // Is this the top level request for a dynamic module import?
   const bool mIsDynamicImport;
 
+  // True if this module is planned to be saved in the bytecode cache.
+  // ModuleLoadRequest doesn't use ScriptLoadRequest::mScriptForBytecodeEncoding
+  // field because the JSScript reference isn't always avaialble for module.
+  bool mIsMarkedForBytecodeEncoding = false;
+
   // Pointer to the script loader, used to trigger actions when the module load
   // finishes.
   RefPtr<ModuleLoaderBase> mLoader;
 
-  // Pointer to the top level module of this module tree, nullptr if this is
-  // a top level module
+  // Pointer to the top level module of this module graph, nullptr if this is a
+  // top level module
   RefPtr<ModuleLoadRequest> mRootModule;
 
   // Set to a module script object after a successful load or nullptr on

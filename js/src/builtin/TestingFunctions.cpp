@@ -142,6 +142,7 @@
 #include "vm/NativeObject-inl.h"
 #include "vm/ObjectFlags-inl.h"
 #include "vm/StringType-inl.h"
+#include "wasm/WasmInstance-inl.h"
 
 using namespace js;
 
@@ -436,6 +437,24 @@ static bool GetBuildConfiguration(JSContext* cx, unsigned argc, Value* vp) {
     return false;
   }
 
+#ifdef JS_CODEGEN_LOONG64
+  value = BooleanValue(true);
+#else
+  value = BooleanValue(false);
+#endif
+  if (!JS_SetProperty(cx, info, "loong64", value)) {
+    return false;
+  }
+
+#ifdef JS_SIMULATOR_LOONG64
+  value = BooleanValue(true);
+#else
+  value = BooleanValue(false);
+#endif
+  if (!JS_SetProperty(cx, info, "loong64-simulator", value)) {
+    return false;
+  }
+
 #ifdef MOZ_ASAN
   value = BooleanValue(true);
 #else
@@ -546,6 +565,15 @@ static bool GetBuildConfiguration(JSContext* cx, unsigned argc, Value* vp) {
   value = BooleanValue(false);
 #endif
   if (!JS_SetProperty(cx, info, "new-set-methods", value)) {
+    return false;
+  }
+
+#ifdef FUZZING
+  value = BooleanValue(true);
+#else
+  value = BooleanValue(false);
+#endif
+  if (!JS_SetProperty(cx, info, "fuzzing-defined", value)) {
     return false;
   }
 
@@ -2985,7 +3013,6 @@ static bool NewObjectWithAddPropertyHook(JSContext* cx, unsigned argc,
       nullptr,      // mayResolve
       nullptr,      // finalize
       nullptr,      // call
-      nullptr,      // hasInstance
       nullptr,      // construct
       nullptr,      // trace
   };
@@ -3876,7 +3903,7 @@ static bool StreamsAreEnabled(JSContext* cx, unsigned argc, Value* vp) {
 
 static unsigned finalizeCount = 0;
 
-static void finalize_counter_finalize(JSFreeOp* fop, JSObject* obj) {
+static void finalize_counter_finalize(JS::GCContext* gcx, JSObject* obj) {
   ++finalizeCount;
 }
 
@@ -3889,7 +3916,6 @@ static const JSClassOps FinalizeCounterClassOps = {
     nullptr,                    // mayResolve
     finalize_counter_finalize,  // finalize
     nullptr,                    // call
-    nullptr,                    // hasInstance
     nullptr,                    // construct
     nullptr,                    // trace
 };
@@ -4257,7 +4283,7 @@ static bool testingFunc_bailAfter(JSContext* cx, unsigned argc, Value* vp) {
     bool enableBailAfter = bailAfter > 0;
     if (jitRuntime->ionBailAfterEnabled() != enableBailAfter) {
       // Force JIT code to be recompiled with (or without) instrumentation.
-      ReleaseAllJITCode(cx->defaultFreeOp());
+      ReleaseAllJITCode(cx->gcContext());
       jitRuntime->setIonBailAfterEnabled(enableBailAfter);
     }
     jitRuntime->setIonBailAfterCounter(bailAfter);
@@ -4645,7 +4671,7 @@ class CloneBufferObject : public NativeObject {
     return CallNonGenericMethod<is, getCloneBufferAsArrayBuffer_impl>(cx, args);
   }
 
-  static void Finalize(JSFreeOp* fop, JSObject* obj) {
+  static void Finalize(JS::GCContext* gcx, JSObject* obj) {
     obj->as<CloneBufferObject>().discard();
   }
 };
@@ -4659,7 +4685,6 @@ static const JSClassOps CloneBufferObjectClassOps = {
     nullptr,                      // mayResolve
     CloneBufferObject::Finalize,  // finalize
     nullptr,                      // call
-    nullptr,                      // hasInstance
     nullptr,                      // construct
     nullptr,                      // trace
 };
@@ -5008,7 +5033,7 @@ class ShapeSnapshotObject : public NativeObject {
 
   static ShapeSnapshotObject* create(JSContext* cx, HandleObject obj);
 
-  static void finalize(JSFreeOp* fop, JSObject* obj) {
+  static void finalize(JS::GCContext* gcx, JSObject* obj) {
     if (obj->as<ShapeSnapshotObject>().hasSnapshot()) {
       js_delete(&obj->as<ShapeSnapshotObject>().snapshot());
     }
@@ -5029,7 +5054,6 @@ class ShapeSnapshotObject : public NativeObject {
     nullptr,                        // mayResolve
     ShapeSnapshotObject::finalize,  // finalize
     nullptr,                        // call
-    nullptr,                        // hasInstance
     nullptr,                        // construct
     ShapeSnapshotObject::trace,     // trace
 };

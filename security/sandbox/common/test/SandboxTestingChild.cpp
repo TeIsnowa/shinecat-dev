@@ -86,7 +86,11 @@ void SandboxTestingChild::Bind(Endpoint<PSandboxTestingChild>&& aEndpoint) {
     MOZ_ASSERT(s, "Unable to grab a UtilityProcessChild");
     switch (s->mSandbox) {
       case ipc::SandboxingKind::GENERIC_UTILITY:
-        RunTestsUtility(this);
+        RunTestsGenericUtility(this);
+        break;
+
+      case ipc::SandboxingKind::UTILITY_AUDIO_DECODING:
+        RunTestsUtilityAudioDecoder(this);
         break;
 
       default:

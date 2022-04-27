@@ -19,11 +19,11 @@
   <span id=inside2>Inside popup 2</span>
 </popup>
 
-<button id=b3 popup=p3>Popup 3 - button 3
+<button id=b3 onclick='p3.show()'>Popup 3 - button 3
   <popup id=p4>Inside popup 4</popup>
 </button>
 <popup id=p3>Inside popup 3</popup>
-<button id=b4 popup=p3>Popup 3 - button 4
+<button id=b4 onclick='p3.show()'>Popup 3 - button 4
   <popup id=p5>Inside popup 5</popup>
 </button>
 
@@ -31,7 +31,17 @@
   <div style="height:2000px;background:lightgreen"></div>
   Bottom of popup6
 </popup>
-<button popup=p6>Popup 6</button>
+<button onclick='p6.show()'>Popup 6</button>
+
+<my-element id="myElement">
+  <template shadowroot="open">
+    <button id=b7 onclick='showPopup7()'>Popup7</button>
+    <popup id=p7 anchor=b7 style="top: 100px;">
+      <p>Popup content.</p>
+      <input id="inside7" type="text" placeholder="some text">
+    </popup>
+  </template>
+</my-element>
 
 <style>
   #p1 { top:50px; }
@@ -71,6 +81,13 @@
   const popup4 = document.querySelector('#p4');
   const popup5 = document.querySelector('#p5');
   const popup6 = document.querySelector('#p6');
+  const button7 = document.querySelector('#myElement').shadowRoot.querySelector('#b7');
+  const popup7 = document.querySelector('#myElement').shadowRoot.querySelector('#p7');
+  const inside7 = document.querySelector('#myElement').shadowRoot.querySelector('#inside7');
+
+  function showPopup7() {
+    popup7.show();
+  }
 
   (async function() {
     setup({ explicit_done: true });
@@ -137,24 +154,6 @@
       assert_false(popup1.open);
     },'Clicking on anchor element shouldn\'t close its popup');
 
-    await clickOn(button3);
-    test(t => {
-      assert_true(popup3.open,'invoking element should open popup');
-      popup4.show();
-      assert_true(popup4.open);
-      assert_true(popup3.open);
-    },'An invoking element should be part of the ancestor chain');
-
-    await clickOn(button3);
-    assert_true(popup3.open);
-    assert_false(popup4.open);
-    assert_false(popup5.open);
-    popup5.show();
-    test(t => {
-      assert_true(popup5.open);
-      assert_false(popup3.open);
-    },'An invoking element that was not used to invoke the popup should NOT be part of the ancestor chain');
-
     popup1.show();
     popup2.show(); // Popup1 is an ancestral element for popup2.
     assert_true(popup1.open);
@@ -183,6 +182,17 @@
       assert_equals(popup6.scrollTop,50,'popup6 should be scrolled');
       popup6.hide();
     },'Scrolling within a popup should not close the popup');
+
+    button7.click();
+    assert_true(popup7.open);
+    inside7.click();
+    test(t => {
+      assert_true(popup7.open);
+    },'Clicking inside a shadow DOM popup does not close that popup');
+    await clickOn(outside);
+    test(t => {
+      assert_false(popup7.open);
+    },'Clicking outside a shadow DOM popup should close that popup');
 
     done();
   })();

@@ -105,6 +105,7 @@ DEBIAN_DISTROS = (
     "pop",
     "kali",
     "devuan",
+    "pureos",
 )
 
 ADD_GIT_CINNABAR_PATH = """
@@ -548,6 +549,7 @@ def current_firefox_checkout(env, hg: Optional[Path] = None):
 
         if not len(path.parents):
             break
+        path = path.parent
 
     raise UserError(
         "Could not identify the root directory of your checkout! "

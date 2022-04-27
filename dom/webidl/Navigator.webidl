@@ -240,7 +240,7 @@ partial interface Navigator {
 
 // http://webaudio.github.io/web-midi-api/#requestmidiaccess
 partial interface Navigator {
-  [Throws, Pref="dom.webmidi.enabled"]
+  [SecureContext, Throws, Pref="dom.webmidi.enabled"]
   Promise<MIDIAccess> requestMIDIAccess(optional MIDIOptions options = {});
 };
 
@@ -303,8 +303,14 @@ interface mixin NavigatorAutomationInformation {
 
 // https://www.w3.org/TR/clipboard-apis/#navigator-interface
 partial interface Navigator {
-  [Pref="dom.events.asyncClipboard", SecureContext, SameObject]
+  [SecureContext, SameObject]
   readonly attribute Clipboard clipboard;
+};
+
+// Used for testing of origin trials.
+partial interface Navigator {
+  [Trial="TestTrial"]
+  readonly attribute boolean testTrialGatedAttribute;
 };
 
 // https://wicg.github.io/web-share/#navigator-interface

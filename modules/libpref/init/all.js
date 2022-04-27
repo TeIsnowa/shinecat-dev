@@ -160,7 +160,7 @@ pref("security.xfocsp.errorReporting.automatic", false);
 // 1: Consult CRLite but only collect telemetry.
 // 2: Consult CRLite and enforce both "Revoked" and "Not Revoked" results.
 // 3: Consult CRLite and enforce "Not Revoked" results, but defer to OCSP for "Revoked".
-pref("security.pki.crlite_mode", 1);
+pref("security.pki.crlite_mode", 3);
 
 // Issuer we use to detect MitM proxies. Set to the issuer of the cert of the
 // Firefox update service. The string format is whatever NSS uses to print a DN.
@@ -410,12 +410,17 @@ pref("media.decoder-doctor.verbose", false);
 pref("media.decoder-doctor.new-issue-endpoint", "https://webcompat.com/issues/new");
 
 pref("media.videocontrols.picture-in-picture.enabled", false);
+#ifdef NIGHTLY_BUILD
+pref("media.videocontrols.picture-in-picture.display-text-tracks.enabled", true);
+#else
 pref("media.videocontrols.picture-in-picture.display-text-tracks.enabled", false);
+#endif
 pref("media.videocontrols.picture-in-picture.video-toggle.enabled", false);
 pref("media.videocontrols.picture-in-picture.video-toggle.always-show", false);
 pref("media.videocontrols.picture-in-picture.video-toggle.min-video-secs", 45);
 pref("media.videocontrols.picture-in-picture.video-toggle.position", "right");
 pref("media.videocontrols.picture-in-picture.video-toggle.has-used", false);
+pref("media.videocontrols.picture-in-picture.display-text-tracks.size", "medium");
 pref("media.videocontrols.keyboard-tab-to-all-controls", true);
 
 #ifdef MOZ_WEBRTC
@@ -1402,26 +1407,6 @@ pref("network.http.rendering-critical-requests-prioritization", true);
 // IPv6 connectivity.
 pref("network.http.fast-fallback-to-IPv4", true);
 
-// Try and use SPDY when using SSL
-pref("network.http.spdy.enabled", true);
-pref("network.http.spdy.enabled.http2", true);
-pref("network.http.spdy.enabled.deps", true);
-pref("network.http.spdy.enforce-tls-profile", true);
-pref("network.http.spdy.chunk-size", 16000);
-pref("network.http.spdy.timeout", 170);
-pref("network.http.spdy.coalesce-hostnames", true);
-pref("network.http.spdy.persistent-settings", false);
-pref("network.http.spdy.ping-threshold", 58);
-pref("network.http.spdy.ping-timeout", 8);
-pref("network.http.spdy.send-buffer-size", 131072);
-pref("network.http.spdy.allow-push", true);
-pref("network.http.spdy.push-allowance", 131072);   // 128KB
-pref("network.http.spdy.pull-allowance", 12582912); // 12MB
-pref("network.http.spdy.default-concurrent", 100);
-pref("network.http.spdy.default-hpack-buffer", 65536); // 64k
-pref("network.http.spdy.websockets", true);
-pref("network.http.spdy.enable-hpack-dump", false);
-
 // Http3 qpack table size.
 pref("network.http.http3.default-qpack-table-size", 65536); // 64k
 // Maximal number of streams that can be blocked on waiting for qpack
@@ -2196,7 +2181,6 @@ pref("security.insecure_field_warning.contextual.enabled", false);
 pref("security.insecure_field_warning.ignore_local_ip_address", true);
 
 // Remote settings preferences
-// Note: if you change this, make sure to also review security.onecrl.maximum_staleness_in_seconds
 pref("services.settings.poll_interval", 86400); // 24H
 pref("services.settings.server", "https://firefox.settings.services.mozilla.com/v1");
 pref("services.settings.default_bucket", "main");
@@ -2220,16 +2204,17 @@ pref("extensions.abuseReport.amoDetailsURL", "https://services.addons.mozilla.or
 
 // Blocklist preferences
 pref("extensions.blocklist.enabled", true);
-// Required blocklist freshness for OneCRL OCSP bypass (default is 30 hours)
-// Note that this needs to exceed the interval at which we update OneCRL data,
-// configured in services.settings.poll_interval .
-pref("security.onecrl.maximum_staleness_in_seconds", 108000);
 pref("extensions.blocklist.detailsURL", "https://blocked.cdn.mozilla.net/");
 pref("extensions.blocklist.itemURL", "https://blocked.cdn.mozilla.net/%blockID%.html");
 pref("extensions.blocklist.addonItemURL", "https://addons.mozilla.org/%LOCALE%/%APP%/blocked-addon/%addonID%/%addonVersion%/");
 // Controls what level the blocklist switches from warning about items to forcibly
 // blocking them.
 pref("extensions.blocklist.level", 2);
+// Whether event pages should be enabled for "manifest_version: 2" extensions.
+pref("extensions.eventPages.enabled", false);
+// Whether "manifest_version: 3" extensions should be allowed to install successfully.
+pref("extensions.manifestV3.enabled", false);
+
 // Blocklist via settings server (Kinto)
 pref("services.blocklist.bucket", "blocklists");
 pref("services.blocklist.addons.collection", "addons");
@@ -2446,9 +2431,6 @@ pref("plugins.favorfallback.rules", "");
   #endif
 #endif
 
-pref("dom.ipc.plugins.flash.disable-protected-mode", false);
-
-pref("dom.ipc.plugins.flash.subprocess.crashreporter.enabled", true);
 pref("dom.ipc.plugins.reportCrashURL", true);
 
 // Force the accelerated direct path for a subset of Flash wmode values
@@ -2488,9 +2470,6 @@ pref("dom.ipc.keepProcessesAlive.privilegedabout", 1);
 
 // Disable support for SVG
 pref("svg.disabled", false);
-
-// Override default dom.ipc.processCount for some remote content process types.
-pref("dom.ipc.processCount.webLargeAllocation", 10);
 
 // Disable e10s for Gecko by default. This is overridden in firefox.js.
 pref("browser.tabs.remote.autostart", false);
@@ -2662,17 +2641,17 @@ pref("font.size.monospace.x-math", 13);
 
   pref("font.name-list.serif.ar", "Times New Roman");
   pref("font.name-list.sans-serif.ar", "Segoe UI, Tahoma, Arial");
-  pref("font.name-list.monospace.ar", "Courier New");
+  pref("font.name-list.monospace.ar", "Consolas");
   pref("font.name-list.cursive.ar", "Comic Sans MS");
 
   pref("font.name-list.serif.el", "Times New Roman");
   pref("font.name-list.sans-serif.el", "Arial");
-  pref("font.name-list.monospace.el", "Courier New");
+  pref("font.name-list.monospace.el", "Consolas");
   pref("font.name-list.cursive.el", "Comic Sans MS");
 
   pref("font.name-list.serif.he", "Narkisim, David");
   pref("font.name-list.sans-serif.he", "Arial");
-  pref("font.name-list.monospace.he", "Fixed Miriam Transparent, Miriam Fixed, Rod, Courier New");
+  pref("font.name-list.monospace.he", "Fixed Miriam Transparent, Miriam Fixed, Rod, Consolas, Courier New");
   pref("font.name-list.cursive.he", "Guttman Yad, Ktav, Arial");
 
   pref("font.name-list.serif.ja", "Yu Mincho, MS PMincho, MS Mincho, Meiryo, Yu Gothic, MS PGothic, MS Gothic");
@@ -2691,17 +2670,17 @@ pref("font.size.monospace.x-math", 13);
 
   pref("font.name-list.serif.x-cyrillic", "Times New Roman");
   pref("font.name-list.sans-serif.x-cyrillic", "Arial");
-  pref("font.name-list.monospace.x-cyrillic", "Courier New");
+  pref("font.name-list.monospace.x-cyrillic", "Consolas");
   pref("font.name-list.cursive.x-cyrillic", "Comic Sans MS");
 
   pref("font.name-list.serif.x-unicode", "Times New Roman");
   pref("font.name-list.sans-serif.x-unicode", "Arial");
-  pref("font.name-list.monospace.x-unicode", "Courier New");
+  pref("font.name-list.monospace.x-unicode", "Consolas");
   pref("font.name-list.cursive.x-unicode", "Comic Sans MS");
 
   pref("font.name-list.serif.x-western", "Times New Roman");
   pref("font.name-list.sans-serif.x-western", "Arial");
-  pref("font.name-list.monospace.x-western", "Courier New");
+  pref("font.name-list.monospace.x-western", "Consolas");
   pref("font.name-list.cursive.x-western", "Comic Sans MS");
 
   pref("font.name-list.serif.zh-CN", "SimSun, MS Song, SimSun-ExtB");
@@ -2799,7 +2778,7 @@ pref("font.size.monospace.x-math", 13);
 
   pref("font.name-list.serif.x-math", "Latin Modern Math, STIX Two Math, XITS Math, Cambria Math, Libertinus Math, DejaVu Math TeX Gyre, TeX Gyre Bonum Math, TeX Gyre Pagella Math, TeX Gyre Schola, TeX Gyre Termes Math, STIX Math, Asana Math, STIXGeneral, DejaVu Serif, DejaVu Sans, Times New Roman");
   pref("font.name-list.sans-serif.x-math", "Arial");
-  pref("font.name-list.monospace.x-math", "Courier New");
+  pref("font.name-list.monospace.x-math", "Consolas");
   pref("font.name-list.cursive.x-math", "Comic Sans MS");
 
   // ClearType tuning parameters for directwrite/d2d.
@@ -2915,11 +2894,11 @@ pref("font.size.monospace.x-math", 13);
   // available.  Note that this is ignored if active ATOK is or older than
   // 2016 and create_native_caret is true.
   pref("intl.tsf.hack.atok.do_not_return_no_layout_error_of_composition_string", true);
-  // Whether disable "search" input scope when the ATOK is active on windows. 
+  // Whether disable "search" input scope when the ATOK is active on windows.
   // When "search" is set to the input scope, ATOK may stop their suggestions.
   // To avoid it, turn this pref on, or changing the settings in ATOK.
   // Note that if you enable this pref and you use the touch keyboard for touch
-  // screens, you cannot access some specific features for a "search" input 
+  // screens, you cannot access some specific features for a "search" input
   // field.
   pref("intl.tsf.hack.atok.search_input_scope_disabled", false);
   // Whether use available composition string rect for result of
@@ -4122,13 +4101,10 @@ pref("media.gmp-manager.url", "https://aus5.mozilla.org/update/3/GMP/%VERSION%/%
 // header. Information from this header will be used to validate the response.
 // If this header is not present, is malformed, or cannot be determined as
 // valid then the update will fail.
-#ifdef EARLY_BETA_OR_EARLIER
-  // The plan is to have the feature gated by this pref to eventually replace
-  // the features controlled by the media.gmp-manager.cert.* prefs. Once that
-  // happens we can remove related code and prefs, but while testing we'll use
-  // this to gate (see bug 1714621 for more info).
-  pref("media.gmp-manager.checkContentSignature", true);
-#endif
+// We should eventually remove this pref and any cert pinning code and make
+// the content signature path the sole path. We retain this for now in case
+// we need to debug content sig vs cert pin.
+pref("media.gmp-manager.checkContentSignature", true);
 
 // When |media.gmp-manager.cert.requireBuiltIn| is true or not specified the
 // final certificate and all certificates the connection is redirected to before
@@ -4468,10 +4444,6 @@ pref("services.common.log.logger.tokenserverclient", "Debug");
     pref("remote.active-protocols", 2);
   #endif
 
-  // Limits remote agent to listen on loopback devices,
-  // e.g. 127.0.0.1, localhost, and ::1.
-  pref("remote.force-local", true);
-
   // Defines the verbosity of the internal logger.
   //
   // Available levels are, in descending order of severity, "Trace", "Debug",
@@ -4494,11 +4466,8 @@ pref("devtools.jsonview.enabled", true);
 // Default theme ("auto", "dark" or "light").
 pref("devtools.theme", "auto", sticky);
 
-// Display a notification about the new default DevTools theme "auto".
-pref("devtools.theme.show-auto-theme-info", true);
-
 // Completely disable DevTools entry points, as well as all DevTools command
-// line arguments This should be merged with devtools.enabled, see Bug 1440675.
+// line arguments.
 pref("devtools.policy.disabled", false);
 
 // Enable deprecation warnings.
@@ -4599,15 +4568,22 @@ pref("extensions.formautofill.available", "detect");
 pref("extensions.formautofill.addresses.supported", "detect");
 pref("extensions.formautofill.addresses.enabled", true);
 pref("extensions.formautofill.addresses.capture.enabled", false);
+// Supported countries need to follow ISO 3166-1 to align with "browser.search.region"
 pref("extensions.formautofill.addresses.supportedCountries", "US,CA");
 // Note: this ".available" pref is only used for migration purposes and will be removed/replaced later.
 pref("extensions.formautofill.creditCards.available", true);
 pref("extensions.formautofill.creditCards.supported", "detect");
 pref("extensions.formautofill.creditCards.enabled", true);
-pref("extensions.formautofill.creditCards.supportedCountries", "US,CA,UK,FR,DE");
+// Supported countries need to follow ISO 3166-1 to align with "browser.search.region"
+pref("extensions.formautofill.creditCards.supportedCountries", "US,CA,GB,FR,DE");
 // Temporary preference to control displaying the UI elements for
 // credit card autofill used for the duration of the A/B test.
 pref("extensions.formautofill.creditCards.hideui", false);
+// Algorithm used by formautofill while determine whether a field is a credit card field
+// 0:Heurstics based on regular expression string matching
+// 1:Fathom in js implementation, 2:Fathom in c++ implementation
+pref("extensions.formautofill.creditCards.heuristics.mode", 0);
+pref("extensions.formautofill.creditCards.heuristics.confidenceThreshold", "0.5");
 // Pref for shield/heartbeat to recognize users who have used Credit Card
 // Autofill. The valid values can be:
 // 0: none

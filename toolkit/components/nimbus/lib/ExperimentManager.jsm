@@ -135,7 +135,13 @@ class _ExperimentManager {
     }
   }
 
-  _checkUnseenEnrollments(enrollments, sourceToCheck, recipeMismatches) {
+  _checkUnseenEnrollments(
+    enrollments,
+    sourceToCheck,
+    recipeMismatches,
+    invalidRecipes,
+    invalidBranches
+  ) {
     for (const enrollment of enrollments) {
       const { slug, source } = enrollment;
       if (sourceToCheck !== source) {
@@ -144,9 +150,16 @@ class _ExperimentManager {
       if (!this.sessions.get(source)?.has(slug)) {
         log.debug(`Stopping study for recipe ${slug}`);
         try {
-          let reason = recipeMismatches.includes(slug)
-            ? "targeting-mismatch"
-            : "recipe-not-seen";
+          let reason;
+          if (recipeMismatches.includes(slug)) {
+            reason = "targeting-mismatch";
+          } else if (invalidRecipes.includes(slug)) {
+            reason = "invalid-recipe";
+          } else if (invalidBranches.includes(slug)) {
+            reason = "invalid-branch";
+          } else {
+            reason = "recipe-not-seen";
+          }
           this.unenroll(slug, reason);
         } catch (err) {
           Cu.reportError(err);
@@ -161,7 +174,10 @@ class _ExperimentManager {
    * @param {string} sourceToCheck
    * @param {object} options Extra context used in telemetry reporting
    */
-  onFinalize(sourceToCheck, { recipeMismatches } = { recipeMismatches: [] }) {
+  onFinalize(
+    sourceToCheck,
+    { recipeMismatches = [], invalidRecipes = [], invalidBranches = [] } = {}
+  ) {
     if (!sourceToCheck) {
       throw new Error("When calling onFinalize, you must specify a source.");
     }
@@ -170,12 +186,16 @@ class _ExperimentManager {
     this._checkUnseenEnrollments(
       activeExperiments,
       sourceToCheck,
-      recipeMismatches
+      recipeMismatches,
+      invalidRecipes,
+      invalidBranches
     );
     this._checkUnseenEnrollments(
       activeRollouts,
       sourceToCheck,
-      recipeMismatches
+      recipeMismatches,
+      invalidRecipes,
+      invalidBranches
     );
 
     this.sessions.delete(sourceToCheck);
@@ -267,13 +287,16 @@ class _ExperimentManager {
       active: true,
       enrollmentId: NormandyUtils.generateUuid(),
       experimentType,
-      isRollout,
       source,
       userFacingName,
       userFacingDescription,
       lastSeen: new Date().toJSON(),
       featureIds,
     };
+
+    if (typeof isRollout !== "undefined") {
+      experiment.isRollout = isRollout;
+    }
 
     // Tag this as a forced enrollment. This prevents all unenrolling unless
     // manually triggered from about:studies
@@ -329,7 +352,7 @@ class _ExperimentManager {
 
     recipe.userFacingName = `${recipe.userFacingName} - Forced enrollment`;
 
-    return this._enroll(
+    const experiment = this._enroll(
       {
         ...recipe,
         slug: `optin-${recipe.slug}`,
@@ -338,6 +361,10 @@ class _ExperimentManager {
       source,
       { force: true }
     );
+
+    Services.obs.notifyObservers(null, "nimbus:force-enroll");
+
+    return experiment;
   }
 
   /**

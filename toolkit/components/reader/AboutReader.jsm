@@ -47,7 +47,12 @@ const zoomOnMeta =
   Services.prefs.getIntPref("mousewheel.with_meta.action", 1) == 3;
 const isAppLocaleRTL = Services.locale.isAppLocaleRTL;
 
-var AboutReader = function(actor, articlePromise, docContentType = "document") {
+var AboutReader = function(
+  actor,
+  articlePromise,
+  docContentType = "document",
+  docTitle = ""
+) {
   let win = actor.contentWindow;
   let url = this._getOriginalUrl(win);
   if (
@@ -72,6 +77,8 @@ var AboutReader = function(actor, articlePromise, docContentType = "document") {
     doc.dir = "rtl";
   }
   doc.documentElement.setAttribute("platform", AppConstants.platform);
+
+  doc.title = docTitle;
 
   this._actor = actor;
   this._isLoggedInPocketUser = undefined;
@@ -837,7 +844,12 @@ AboutReader.prototype = {
           docContentType
         );
       } catch (e) {
-        if (e && e.newURL) {
+        if (e?.newURL && this._actor) {
+          await this._actor.sendQuery("RedirectTo", {
+            newURL: e.newURL,
+            article: e.article,
+          });
+
           let readerURL = "about:reader?url=" + encodeURIComponent(e.newURL);
           this._win.location.replace(readerURL);
           return;
@@ -1069,7 +1081,14 @@ AboutReader.prototype = {
       article.readingTimeMinsSlow,
       article.readingTimeMinsFast
     );
-    this._doc.title = article.title;
+
+    // If a document title was not provided in the constructor, we'll fall back
+    // to using the article title.
+    if (!this._doc.title) {
+      this._doc.title = article.title;
+    }
+
+    this._containerElement.setAttribute("lang", article.lang);
 
     this._headerElement.classList.add("reader-show-element");
 

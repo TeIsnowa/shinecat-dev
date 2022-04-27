@@ -527,6 +527,8 @@ bool BaselineCodeGen<Handler>::emitOutOfLinePostBarrierSlot() {
   masm.push(lr);
 #elif defined(JS_CODEGEN_MIPS32) || defined(JS_CODEGEN_MIPS64)
   masm.push(ra);
+#elif defined(JS_CODEGEN_LOONG64)
+  masm.push(ra);
 #endif
   masm.pushValue(R0);
 
@@ -2628,31 +2630,6 @@ bool BaselineCodeGen<Handler>::emit_Lambda() {
 }
 
 template <typename Handler>
-bool BaselineCodeGen<Handler>::emit_LambdaArrow() {
-  // Keep pushed newTarget in R0.
-  frame.popRegsAndSync(1);
-
-  prepareVMCall();
-  masm.loadPtr(frame.addressOfEnvironmentChain(), R2.scratchReg());
-
-  pushArg(R0);
-  pushArg(R2.scratchReg());
-  pushScriptGCThingArg(ScriptGCThingType::Function, R0.scratchReg(),
-                       R1.scratchReg());
-
-  using Fn =
-      JSObject* (*)(JSContext*, HandleFunction, HandleObject, HandleValue);
-  if (!callVM<Fn, js::LambdaArrow>()) {
-    return false;
-  }
-
-  // Box and push return value.
-  masm.tagValue(JSVAL_TYPE_OBJECT, ReturnReg, R0);
-  frame.push(R0);
-  return true;
-}
-
-template <typename Handler>
 bool BaselineCodeGen<Handler>::emit_SetFunName() {
   frame.popRegsAndSync(2);
 
@@ -4244,12 +4221,35 @@ void BaselineCompilerCodeGen::loadNumFormalArguments(Register dest) {
 template <>
 void BaselineInterpreterCodeGen::loadNumFormalArguments(Register dest) {
   masm.loadFunctionFromCalleeToken(frame.addressOfCalleeToken(), dest);
-  masm.load32(Address(dest, JSFunction::offsetOfFlagsAndArgCount()), dest);
-  masm.rshift32(Imm32(JSFunction::ArgCountShift), dest);
+  masm.loadFunctionArgCount(dest, dest);
 }
 
 template <typename Handler>
-void BaselineCodeGen<Handler>::emitPushNonArrowFunctionNewTarget() {
+bool BaselineCodeGen<Handler>::emit_NewTarget() {
+  MOZ_ASSERT_IF(handler.maybeFunction(), !handler.maybeFunction()->isArrow());
+
+  frame.syncStack(0);
+
+#ifdef DEBUG
+  Register scratch1 = R0.scratchReg();
+  Register scratch2 = R1.scratchReg();
+
+  Label isFunction;
+  masm.loadPtr(frame.addressOfCalleeToken(), scratch1);
+  masm.branchTestPtr(Assembler::Zero, scratch1, Imm32(CalleeTokenScriptBit),
+                     &isFunction);
+  masm.assumeUnreachable("Unexpected non-function script");
+  masm.bind(&isFunction);
+
+  Label notArrow;
+  masm.andPtr(Imm32(uint32_t(CalleeTokenMask)), scratch1);
+  masm.branchFunctionKind(Assembler::NotEqual,
+                          FunctionFlags::FunctionKind::Arrow, scratch1,
+                          scratch2, &notArrow);
+  masm.assumeUnreachable("Unexpected arrow function");
+  masm.bind(&notArrow);
+#endif
+
   // if (isConstructing()) push(argv[Max(numActualArgs, numFormalArgs)])
   Label notConstructing, done;
   masm.branchTestPtr(Assembler::Zero, frame.addressOfCalleeToken(),
@@ -4276,68 +4276,6 @@ void BaselineCodeGen<Handler>::emitPushNonArrowFunctionNewTarget() {
 
   masm.bind(&done);
   frame.push(R0);
-}
-
-template <>
-bool BaselineCompilerCodeGen::emit_NewTarget() {
-  if (handler.script()->isForEval()) {
-    frame.pushEvalNewTarget();
-    return true;
-  }
-
-  MOZ_ASSERT(handler.function());
-  frame.syncStack(0);
-
-  if (handler.function()->isArrow()) {
-    // Arrow functions store their |new.target| value in an
-    // extended slot.
-    Register scratch = R0.scratchReg();
-    masm.loadFunctionFromCalleeToken(frame.addressOfCalleeToken(), scratch);
-    masm.loadValue(
-        Address(scratch, FunctionExtended::offsetOfArrowNewTargetSlot()), R0);
-    frame.push(R0);
-    return true;
-  }
-
-  emitPushNonArrowFunctionNewTarget();
-  return true;
-}
-
-template <>
-bool BaselineInterpreterCodeGen::emit_NewTarget() {
-  Register scratch1 = R0.scratchReg();
-  Register scratch2 = R1.scratchReg();
-
-  Label isFunction, done;
-  masm.loadPtr(frame.addressOfCalleeToken(), scratch1);
-  masm.branchTestPtr(Assembler::Zero, scratch1, Imm32(CalleeTokenScriptBit),
-                     &isFunction);
-  {
-    // Case 1: eval.
-    frame.pushEvalNewTarget();
-    masm.jump(&done);
-  }
-
-  masm.bind(&isFunction);
-
-  Label notArrow;
-  masm.andPtr(Imm32(uint32_t(CalleeTokenMask)), scratch1);
-  masm.branchFunctionKind(Assembler::NotEqual,
-                          FunctionFlags::FunctionKind::Arrow, scratch1,
-                          scratch2, &notArrow);
-  {
-    // Case 2: arrow function.
-    masm.pushValue(
-        Address(scratch1, FunctionExtended::offsetOfArrowNewTargetSlot()));
-    masm.jump(&done);
-  }
-
-  masm.bind(&notArrow);
-
-  // Case 3: non-arrow function.
-  emitPushNonArrowFunctionNewTarget();
-
-  masm.bind(&done);
   return true;
 }
 
@@ -4493,16 +4431,6 @@ bool BaselineCodeGen<Handler>::emit_SuperCall() {
 }
 
 template <typename Handler>
-bool BaselineCodeGen<Handler>::emit_FunCall() {
-  return emitCall(JSOp::FunCall);
-}
-
-template <typename Handler>
-bool BaselineCodeGen<Handler>::emit_FunApply() {
-  return emitCall(JSOp::FunApply);
-}
-
-template <typename Handler>
 bool BaselineCodeGen<Handler>::emit_Eval() {
   return emitCall(JSOp::Eval);
 }
@@ -4626,21 +4554,9 @@ bool BaselineCodeGen<Handler>::emit_Try() {
 
 template <typename Handler>
 bool BaselineCodeGen<Handler>::emit_Finally() {
-  // JSOp::Finally has a def count of 2, but these values are already on the
-  // stack (they're pushed by JSOp::Gosub). Update the compiler's stack state.
-  frame.incStackDepth(2);
-
   // To match the interpreter, emit an interrupt check at the start of the
   // finally block.
   return emitInterruptCheck();
-}
-
-template <typename Handler>
-bool BaselineCodeGen<Handler>::emit_Gosub() {
-  // Jump to the finally block.
-  frame.syncStack(0);
-  emitJump();
-  return true;
 }
 
 static void LoadBaselineScriptResumeEntries(MacroAssembler& masm,
@@ -4703,28 +4619,14 @@ void BaselineInterpreterCodeGen::jumpToResumeEntry(Register resumeIndex,
 
 template <typename Handler>
 bool BaselineCodeGen<Handler>::emit_Retsub() {
-  frame.popRegsAndSync(2);
+  frame.popRegsAndSync(1);
 
-  Label isReturn;
-  masm.branchTestBooleanTruthy(/* branchIfTrue = */ false, R0, &isReturn);
-
-  // R0 is |true|. We need to throw R1.
-  prepareVMCall();
-  pushArg(R1);
-
-  using Fn = bool (*)(JSContext*, HandleValue);
-  if (!callVM<Fn, js::ThrowOperation>()) {
-    return false;
-  }
-
-  masm.bind(&isReturn);
-
-  // R0 is |false|. R1 contains the resumeIndex to jump to.
-  Register resumeIndexReg = R1.scratchReg();
-  masm.unboxInt32(R1, resumeIndexReg);
+  // R0 contains the resumeIndex to jump to.
+  Register resumeIndexReg = R0.scratchReg();
+  masm.unboxInt32(R0, resumeIndexReg);
 
   Register scratch1 = R2.scratchReg();
-  Register scratch2 = R0.scratchReg();
+  Register scratch2 = R1.scratchReg();
   jumpToResumeEntry(resumeIndexReg, scratch1, scratch2);
   return true;
 }
@@ -5419,6 +5321,26 @@ bool BaselineCodeGen<Handler>::emit_IsGenClosing() {
 }
 
 template <typename Handler>
+bool BaselineCodeGen<Handler>::emit_IsNullOrUndefined() {
+  frame.syncStack(0);
+
+  Label isNullOrUndefined, done;
+  masm.branchTestNull(Assembler::Equal, frame.addressOfStackValue(-1),
+                      &isNullOrUndefined);
+  masm.branchTestUndefined(Assembler::Equal, frame.addressOfStackValue(-1),
+                           &isNullOrUndefined);
+  masm.moveValue(BooleanValue(false), R0);
+  masm.jump(&done);
+
+  masm.bind(&isNullOrUndefined);
+  masm.moveValue(BooleanValue(true), R0);
+
+  masm.bind(&done);
+  frame.push(R0, JSVAL_TYPE_BOOLEAN);
+  return true;
+}
+
+template <typename Handler>
 bool BaselineCodeGen<Handler>::emit_GetRval() {
   frame.syncStack(0);
 
@@ -5495,6 +5417,8 @@ bool BaselineCodeGen<Handler>::emit_SuperBase() {
   // Load [[HomeObject]]
   Address homeObjAddr(scratch,
                       FunctionExtended::offsetOfMethodHomeObjectSlot());
+
+  masm.assertFunctionIsExtended(scratch);
 #ifdef DEBUG
   Label isObject;
   masm.branchTestObject(Assembler::Equal, homeObjAddr, &isObject);
@@ -5914,9 +5838,7 @@ bool BaselineCodeGen<Handler>::emit_Resume() {
   // Push |undefined| for all formals.
   Register scratch2 = regs.takeAny();
   Label loop, loopDone;
-  masm.load32(Address(callee, JSFunction::offsetOfFlagsAndArgCount()),
-              scratch2);
-  masm.rshift32(Imm32(JSFunction::ArgCountShift), scratch2);
+  masm.loadFunctionArgCount(callee, scratch2);
 
   static_assert(sizeof(Value) == 8);
   static_assert(JitStackAlignment == 16 || JitStackAlignment == 8);
@@ -6278,6 +6200,8 @@ bool BaselineCodeGen<Handler>::emit_InitHomeObject() {
   // Load function off stack
   Register func = R2.scratchReg();
   masm.unboxObject(frame.addressOfStackValue(-1), func);
+
+  masm.assertFunctionIsExtended(func);
 
   // Set HOMEOBJECT_SLOT
   Register temp = R1.scratchReg();

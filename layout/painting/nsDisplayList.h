@@ -39,7 +39,6 @@
 #include "mozilla/TimeStamp.h"
 #include "mozilla/UniquePtr.h"
 #include "mozilla/dom/EffectsInfo.h"
-#include "mozilla/dom/RemoteBrowser.h"
 #include "mozilla/gfx/UserData.h"
 #include "mozilla/layers/BSPTree.h"
 #include "mozilla/layers/LayerAttributes.h"
@@ -100,6 +99,7 @@ class DisplayListBuilder;
 }  // namespace wr
 
 namespace dom {
+class RemoteBrowser;
 class Selection;
 }  // namespace dom
 
@@ -896,14 +896,17 @@ class nsDisplayListBuilder {
     return mPool.Allocate(aId, aSize);
   }
   void* Allocate(size_t aSize, DisplayItemType aType) {
-    static_assert(size_t(DisplayItemType::TYPE_ZERO) ==
-                      size_t(DisplayListArenaObjectId::CLIPCHAIN),
-                  "");
 #define DECLARE_DISPLAY_ITEM_TYPE(name_, ...)                \
   static_assert(size_t(DisplayItemType::TYPE_##name_) ==     \
                     size_t(DisplayListArenaObjectId::name_), \
                 "");
 #include "nsDisplayItemTypesList.h"
+    static_assert(size_t(DisplayItemType::TYPE_MAX) ==
+                      size_t(DisplayListArenaObjectId::CLIPCHAIN),
+                  "");
+    static_assert(size_t(DisplayItemType::TYPE_MAX) + 1 ==
+                      size_t(DisplayListArenaObjectId::LISTNODE),
+                  "");
 #undef DECLARE_DISPLAY_ITEM_TYPE
     return Allocate(aSize, DisplayListArenaObjectId(size_t(aType)));
   }
@@ -1730,8 +1733,6 @@ class nsDisplayListBuilder {
    */
   void ReuseDisplayItem(nsDisplayItem* aItem);
 
-  ListArenaAllocator& GetListAllocator() { return mListPool; }
-
  private:
   bool MarkOutOfFlowFrameForDisplay(nsIFrame* aDirtyFrame, nsIFrame* aFrame,
                                     const nsRect& aVisibleRect,
@@ -1930,8 +1931,6 @@ class nsDisplayListBuilder {
 
   // Stores reusable items collected during display list preprocessing.
   nsTHashSet<nsDisplayItem*> mReuseableItems;
-
-  ArenaAllocator<4096, 8> mListPool;
 };
 
 // All types are defined in nsDisplayItemTypes.h
@@ -2681,11 +2680,6 @@ class nsDisplayItem {
   const nsRect& GetBuildingRect() const { return mBuildingRect; }
 
   void SetBuildingRect(const nsRect& aBuildingRect) {
-    if (aBuildingRect == mBuildingRect) {
-      // Avoid unnecessary paint rect recompution when the
-      // building rect is staying the same.
-      return;
-    }
     mBuildingRect = aBuildingRect;
   }
 
@@ -3000,6 +2994,8 @@ struct LinkedListIterator {
 
   explicit LinkedListIterator(Node* aNode = nullptr) : mNode(aNode) {}
 
+  bool HasNext() const { return mNode != nullptr; }
+
   LinkedListIterator<T>& operator++() {
     MOZ_ASSERT(mNode);
     mNode = mNode->mNext;
@@ -3050,8 +3046,7 @@ class nsDisplayList {
   const_iterator begin() const { return iterator(mBottom); }
   const_iterator end() const { return iterator(nullptr); }
 
-  explicit nsDisplayList(nsDisplayListBuilder* aBuilder)
-      : mPool(aBuilder->GetListAllocator()) {}
+  explicit nsDisplayList(nsDisplayListBuilder* aBuilder) : mBuilder(aBuilder) {}
 
   nsDisplayList() = delete;
   nsDisplayList(const nsDisplayList&) = delete;
@@ -3070,12 +3065,12 @@ class nsDisplayList {
       : mBottom(aOther.mBottom),
         mTop(aOther.mTop),
         mLength(aOther.mLength),
-        mPool(aOther.mPool) {
+        mBuilder(aOther.mBuilder) {
     aOther.SetEmpty();
   }
 
   nsDisplayList& operator=(nsDisplayList&& aOther) {
-    MOZ_RELEASE_ASSERT(&mPool == &aOther.mPool);
+    MOZ_RELEASE_ASSERT(mBuilder == aOther.mBuilder);
 
     if (this != &aOther) {
       MOZ_RELEASE_ASSERT(IsEmpty());
@@ -3132,7 +3127,7 @@ class nsDisplayList {
    */
   void AppendToTop(nsDisplayList* aList) {
     MOZ_ASSERT(aList != this);
-    MOZ_RELEASE_ASSERT(&mPool == &aList->mPool);
+    MOZ_RELEASE_ASSERT(mBuilder == aList->mBuilder);
 
     if (aList->IsEmpty()) {
       return;
@@ -3246,6 +3241,28 @@ class nsDisplayList {
     return list;
   }
 
+  nsDisplayItem* RemoveBottom() {
+    if (!mBottom) {
+      return nullptr;
+    }
+
+    nsDisplayItem* bottom = mBottom->mValue;
+
+    auto next = mBottom->mNext;
+    Deallocate(mBottom);
+    mBottom = next;
+
+    if (!mBottom) {
+      // No bottom item means no items at all.
+      mTop = nullptr;
+    }
+
+    MOZ_ASSERT(mLength > 0);
+    mLength--;
+
+    return bottom;
+  }
+
   /**
    * Paint the list to the rendering context. We assume that (0,0) in aCtx
    * corresponds to the origin of the reference frame. For best results,
@@ -3343,13 +3360,14 @@ class nsDisplayList {
 
  private:
   inline Node* Allocate(nsDisplayItem* aItem) {
-    void* ptr = mPool.Allocate(sizeof(Node));
+    void* ptr =
+        mBuilder->Allocate(sizeof(Node), DisplayListArenaObjectId::LISTNODE);
     return new (ptr) Node(aItem);
   }
 
   inline void Deallocate(Node* aNode) {
     aNode->~Node();
-    // Memory remains reserved by the arena allocator.
+    mBuilder->Destroy(DisplayListArenaObjectId::LISTNODE, aNode);
   }
 
   void SetEmpty() {
@@ -3361,7 +3379,7 @@ class nsDisplayList {
   Node* mBottom = nullptr;
   Node* mTop = nullptr;
   size_t mLength = 0;
-  ListArenaAllocator& mPool;
+  nsDisplayListBuilder* mBuilder = nullptr;
 
 #ifdef MOZ_DIAGNOSTIC_ASSERT_ENABLED
   // This checks that the invariant of display lists owning their items is held.
@@ -5511,7 +5529,8 @@ class nsDisplayStickyPosition : public nsDisplayOwnLayer {
                           const nsDisplayStickyPosition& aOther)
       : nsDisplayOwnLayer(aBuilder, aOther),
         mContainerASR(aOther.mContainerASR),
-        mClippedToDisplayPort(aOther.mClippedToDisplayPort) {
+        mClippedToDisplayPort(aOther.mClippedToDisplayPort),
+        mShouldFlatten(false) {
     MOZ_COUNT_CTOR(nsDisplayStickyPosition);
   }
 
@@ -5543,6 +5562,14 @@ class nsDisplayStickyPosition : public nsDisplayOwnLayer {
 
   bool CanMoveAsync() override { return true; }
 
+  void SetShouldFlatten(bool aShouldFlatten) {
+    mShouldFlatten = aShouldFlatten;
+  }
+
+  bool ShouldFlattenAway(nsDisplayListBuilder* aBuilder) final {
+    return mShouldFlatten;
+  }
+
  private:
   NS_DISPLAY_ALLOW_CLONING()
 
@@ -5569,6 +5596,9 @@ class nsDisplayStickyPosition : public nsDisplayOwnLayer {
   // checkerboarded. Note that the sticky item will still be subject to the
   // scrollport clip.
   bool mClippedToDisplayPort;
+
+  // True if this item should be flattened away.
+  bool mShouldFlatten;
 };
 
 class nsDisplayFixedPosition : public nsDisplayOwnLayer {
@@ -6580,33 +6610,6 @@ class nsDisplayText final : public nsPaintedDisplayItem {
                ? static_cast<nsDisplayText*>(aItem)
                : nullptr;
   }
-
-  struct ClipEdges {
-    ClipEdges(const nsIFrame* aFrame, const nsPoint& aToReferenceFrame,
-              nscoord aVisIStartEdge, nscoord aVisIEndEdge) {
-      nsRect r = aFrame->ScrollableOverflowRect() + aToReferenceFrame;
-      if (aFrame->GetWritingMode().IsVertical()) {
-        mVisIStart = aVisIStartEdge > 0 ? r.y + aVisIStartEdge : nscoord_MIN;
-        mVisIEnd = aVisIEndEdge > 0
-                       ? std::max(r.YMost() - aVisIEndEdge, mVisIStart)
-                       : nscoord_MAX;
-      } else {
-        mVisIStart = aVisIStartEdge > 0 ? r.x + aVisIStartEdge : nscoord_MIN;
-        mVisIEnd = aVisIEndEdge > 0
-                       ? std::max(r.XMost() - aVisIEndEdge, mVisIStart)
-                       : nscoord_MAX;
-      }
-    }
-
-    void Intersect(nscoord* aVisIStart, nscoord* aVisISize) const {
-      nscoord end = *aVisIStart + *aVisISize;
-      *aVisIStart = std::max(*aVisIStart, mVisIStart);
-      *aVisISize = std::max(std::min(end, mVisIEnd) - *aVisIStart, 0);
-    }
-
-    nscoord mVisIStart;
-    nscoord mVisIEnd;
-  };
 
   nscoord& VisIStartEdge() { return mVisIStartEdge; }
   nscoord& VisIEndEdge() { return mVisIEndEdge; }

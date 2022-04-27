@@ -121,6 +121,11 @@ typedef gfx::MarginTyped<RenderTargetPixel> RenderTargetMargin;
 typedef gfx::IntMarginTyped<RenderTargetPixel> RenderTargetIntMargin;
 typedef gfx::IntRegionTyped<RenderTargetPixel> RenderTargetIntRegion;
 
+typedef gfx::PointTyped<ImagePixel> ImagePoint;
+typedef gfx::IntPointTyped<ImagePixel> ImageIntPoint;
+typedef gfx::SizeTyped<ImagePixel> ImageSize;
+typedef gfx::IntSizeTyped<ImagePixel> ImageIntSize;
+typedef gfx::RectTyped<ImagePixel> ImageRect;
 typedef gfx::IntRectTyped<ImagePixel> ImageIntRect;
 
 typedef gfx::CoordTyped<ScreenPixel> ScreenCoord;
@@ -438,6 +443,15 @@ struct LayoutDevicePixel {
     return LayoutDeviceIntPoint(
         NSAppUnitsToIntPixels(aPoint.x, aAppUnitsPerDevPixel),
         NSAppUnitsToIntPixels(aPoint.y, aAppUnitsPerDevPixel));
+  }
+
+  static LayoutDeviceIntRect FromAppUnitsRounded(const nsRect& aRect,
+                                                 nscoord aAppUnitsPerDevPixel) {
+    return LayoutDeviceIntRect(
+        NSAppUnitsToIntPixels(aRect.x, aAppUnitsPerDevPixel),
+        NSAppUnitsToIntPixels(aRect.y, aAppUnitsPerDevPixel),
+        NSAppUnitsToIntPixels(aRect.Width(), aAppUnitsPerDevPixel),
+        NSAppUnitsToIntPixels(aRect.Height(), aAppUnitsPerDevPixel));
   }
 
   static LayoutDeviceIntPoint FromAppUnitsToNearest(

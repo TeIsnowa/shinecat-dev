@@ -89,7 +89,7 @@ TOLERATED_DUPES = {
     "mio": 2,
     "pin-project-lite": 2,
     "target-lexicon": 2,
-    "tokio": 2,
+    "tokio": 3,
 }
 
 
@@ -345,6 +345,13 @@ Please commit or stash these changes before vendoring, or re-run with `--ignore-
         But I have no idea how you can meaningfully AND licenses, so
         we will abort if that is detected. We'll handle `/` and OR as
         equivalent and approve is any is in our approved list."""
+
+        # This specific AND combination has been reviewed for encoding_rs.
+        if (
+            license_string == "(Apache-2.0 OR MIT) AND BSD-3-Clause"
+            and package == "encoding_rs"
+        ):
+            return True
 
         if re.search(r"\s+AND", license_string):
             return False

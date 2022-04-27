@@ -18,7 +18,7 @@ add_task(async function() {
   info("Web Console opened");
   const outputScroller = hud.ui.outputScroller;
   await waitFor(
-    () => findMessages(hud, "").length == 100,
+    () => findMessage(hud, "console message 100"),
     "waiting for all the messages to be displayed",
     100,
     1000
@@ -97,5 +97,19 @@ add_task(async function() {
     getFilterInput(hud),
     outputScroller.ownerDocument.activeElement,
     "filter input is focused"
+  );
+
+  info("Ctrl-U should open view:source when input is focused");
+  hud.jsterm.focus();
+  const onTabOpen = BrowserTestUtils.waitForNewTab(
+    gBrowser,
+    url => url.startsWith("view-source:"),
+    true
+  );
+  EventUtils.synthesizeKey("u", { accelKey: true });
+  await onTabOpen;
+  ok(
+    true,
+    "The view source tab was opened with the expected keyboard shortcut"
   );
 });

@@ -90,6 +90,10 @@ already_AddRefed<dom::PWebGLParent> CanvasManagerParent::AllocPWebGLParent() {
 
 already_AddRefed<webgpu::PWebGPUParent>
 CanvasManagerParent::AllocPWebGPUParent() {
+  if (!gfxVars::AllowWebGPU()) {
+    return nullptr;
+  }
+
   return MakeAndAddRef<webgpu::WebGPUParent>();
 }
 

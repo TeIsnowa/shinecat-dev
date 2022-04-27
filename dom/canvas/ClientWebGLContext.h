@@ -682,8 +682,9 @@ struct TexImageSourceAdapter final : public TexImageSource {
   }
 
   TexImageSourceAdapter(const dom::OffscreenCanvas* offscreenCanvas,
-                        ErrorResult*) {
+                        ErrorResult* const out_error) {
     mOffscreenCanvas = offscreenCanvas;
+    mOut_error = out_error;
   }
 
   TexImageSourceAdapter(const dom::Element* domElem,
@@ -1034,7 +1035,8 @@ class ClientWebGLContext final : public nsICanvasRenderingContextInternal,
 
  private:
   RefPtr<gfx::DataSourceSurface> BackBufferSnapshot();
-  void DoReadPixels(const webgl::ReadPixelsDesc&, Range<uint8_t>) const;
+  [[nodiscard]] bool DoReadPixels(const webgl::ReadPixelsDesc&,
+                                  Range<uint8_t>) const;
   uvec2 DrawingBufferSize();
 
   // -

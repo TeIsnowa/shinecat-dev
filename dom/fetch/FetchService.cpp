@@ -1,29 +1,39 @@
-/* -*- Mode: C++; tab-width: 8; indent-tabs-mode: nil; c-basic-offset: 2 -*- */
-/* vim: set ts=8 sts=2 et sw=2 tw=80: */
 /* This Source Code Form is subject to the terms of the Mozilla Public
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
 #include "FetchLog.h"
+#include "nsContentUtils.h"
+#include "nsICookieJarSettings.h"
 #include "nsILoadGroup.h"
 #include "nsILoadInfo.h"
+#include "nsIIOService.h"
+#include "nsIObserverService.h"
 #include "nsIPrincipal.h"
-#include "nsICookieJarSettings.h"
+#include "nsIScriptSecurityManager.h"
 #include "nsNetUtil.h"
 #include "nsThreadUtils.h"
 #include "nsXULAppAPI.h"
 #include "mozilla/BasePrincipal.h"
 #include "mozilla/ClearOnShutdown.h"
 #include "mozilla/ScopeExit.h"
+#include "mozilla/UniquePtr.h"
 #include "mozilla/dom/FetchService.h"
 #include "mozilla/dom/InternalRequest.h"
 #include "mozilla/dom/InternalResponse.h"
 #include "mozilla/dom/PerformanceStorage.h"
+#include "mozilla/dom/PerformanceTiming.h"
 #include "mozilla/ipc/BackgroundUtils.h"
 
 namespace mozilla::dom {
 
 mozilla::LazyLogModule gFetchLog("Fetch");
+
+FetchServiceResponse CreateErrorResponse(nsresult aRv) {
+  IPCPerformanceTimingData ipcTimingData;
+  return MakeTuple(InternalResponse::NetworkError(aRv), ipcTimingData,
+                   EmptyString(), EmptyString());
+}
 
 // FetchInstance
 
@@ -44,23 +54,21 @@ nsresult FetchService::FetchInstance::Initialize(nsIChannel* aChannel) {
     nsCOMPtr<nsILoadInfo> loadInfo = aChannel->LoadInfo();
     MOZ_ASSERT(loadInfo);
 
-    rv = loadInfo->GetLoadingPrincipal(getter_AddRefs(mPrincipal));
+    nsCOMPtr<nsIURI> channelURI;
+    rv = aChannel->GetURI(getter_AddRefs(channelURI));
     if (NS_WARN_IF(NS_FAILED(rv))) {
       return rv;
     }
 
-    // Top level document load has no loadingPrincipal, try to use channel's URI
+    nsIScriptSecurityManager* securityManager =
+        nsContentUtils::GetSecurityManager();
+    if (securityManager) {
+      securityManager->GetChannelResultPrincipal(aChannel,
+                                                 getter_AddRefs(mPrincipal));
+    }
+
     if (!mPrincipal) {
-      nsCOMPtr<nsIURI> channelURI;
-      rv = aChannel->GetURI(getter_AddRefs(channelURI));
-      if (NS_WARN_IF(NS_FAILED(rv))) {
-        return rv;
-      }
-      mPrincipal = BasePrincipal::CreateContentPrincipal(
-          channelURI, loadInfo->GetOriginAttributes());
-      if (!mPrincipal) {
-        return NS_ERROR_UNEXPECTED;
-      }
+      return NS_ERROR_UNEXPECTED;
     }
 
     // Get loadGroup from channel
@@ -129,8 +137,7 @@ RefPtr<FetchServiceResponsePromise> FetchService::FetchInstance::Fetch() {
   if (NS_WARN_IF(NS_FAILED(rv))) {
     FETCH_LOG(
         ("FetchInstance::Fetch FetchDriver::Fetch failed(0x%X)", (uint32_t)rv));
-    return FetchServiceResponsePromise::CreateAndResolve(
-        InternalResponse::NetworkError(rv), __func__);
+    return FetchService::NetworkErrorResponse(rv);
   }
 
   return mResponsePromiseHolder.Ensure(__func__);
@@ -147,20 +154,18 @@ void FetchService::FetchInstance::Cancel() {
   }
 
   mResponsePromiseHolder.ResolveIfExists(
-      InternalResponse::NetworkError(NS_ERROR_DOM_ABORT_ERR), __func__);
+      CreateErrorResponse(NS_ERROR_DOM_ABORT_ERR), __func__);
 }
 
 void FetchService::FetchInstance::OnResponseEnd(
     FetchDriverObserver::EndReason aReason) {
+  FETCH_LOG(("FetchInstance::OnResponseEnd [%p]", this));
   if (aReason == eAborted) {
+    FETCH_LOG(("FetchInstance::OnResponseEnd end with eAborted"));
     mResponsePromiseHolder.ResolveIfExists(
-        InternalResponse::NetworkError(NS_ERROR_DOM_ABORT_ERR), __func__);
+        CreateErrorResponse(NS_ERROR_DOM_ABORT_ERR), __func__);
+    return;
   }
-}
-
-void FetchService::FetchInstance::OnResponseAvailableInternal(
-    SafeRefPtr<InternalResponse> aResponse) {
-  FETCH_LOG(("FetchInstance::OnResponseAvailableInternal [%p]", this));
   if (!mResponsePromiseHolder.IsEmpty()) {
     // Remove the FetchInstance from FetchInstanceTable
     RefPtr<FetchServiceResponsePromise> responsePromise =
@@ -171,12 +176,33 @@ void FetchService::FetchInstance::OnResponseAvailableInternal(
     MOZ_ASSERT(entry);
     entry.Remove();
     FETCH_LOG(
-        ("FetchInstance::OnResponseAvailableInternal entry of "
-         "responsePromise[%p] is removed",
+        ("FetchInstance::OnResponseEnd entry of responsePromise[%p] is removed",
          responsePromise.get()));
   }
+
+  // Get PerformanceTimingData from FetchDriver.
+  IPCPerformanceTimingData ipcPerformanceTiming;
+  nsString initiatorType;
+  nsString entryName;
+  UniquePtr<PerformanceTimingData> performanceTiming(
+      mFetchDriver->GetPerformanceTimingData(initiatorType, entryName));
+  if (performanceTiming != nullptr) {
+    ipcPerformanceTiming = performanceTiming->ToIPC();
+  }
+
+  initiatorType = u"navigation"_ns;
+
+  FetchServiceResponse response = MakeTuple(
+      std::move(mResponse), ipcPerformanceTiming, initiatorType, entryName);
+
   // Resolve the FetchServiceResponsePromise
-  mResponsePromiseHolder.ResolveIfExists(std::move(aResponse), __func__);
+  mResponsePromiseHolder.ResolveIfExists(std::move(response), __func__);
+}
+
+void FetchService::FetchInstance::OnResponseAvailableInternal(
+    SafeRefPtr<InternalResponse> aResponse) {
+  FETCH_LOG(("FetchInstance::OnResponseAvailableInternal [%p]", this));
+  mResponse = std::move(aResponse);
 }
 
 // TODO:
@@ -188,6 +214,8 @@ void FetchService::FetchInstance::FlushConsoleReport() {}
 
 // FetchService
 
+NS_IMPL_ISUPPORTS(FetchService, nsIObserver)
+
 StaticRefPtr<FetchService> gInstance;
 
 /*static*/
@@ -197,6 +225,11 @@ already_AddRefed<FetchService> FetchService::GetInstance() {
 
   if (!gInstance) {
     gInstance = MakeRefPtr<FetchService>();
+    nsresult rv = gInstance->RegisterNetworkObserver();
+    if (NS_WARN_IF(NS_FAILED(rv))) {
+      gInstance = nullptr;
+      return nullptr;
+    }
     ClearOnShutdown(&gInstance);
   }
   RefPtr<FetchService> service = gInstance;
@@ -206,8 +239,8 @@ already_AddRefed<FetchService> FetchService::GetInstance() {
 /*static*/
 RefPtr<FetchServiceResponsePromise> FetchService::NetworkErrorResponse(
     nsresult aRv) {
-  return FetchServiceResponsePromise::CreateAndResolve(
-      InternalResponse::NetworkError(aRv), __func__);
+  return FetchServiceResponsePromise::CreateAndResolve(CreateErrorResponse(aRv),
+                                                       __func__);
 }
 
 FetchService::FetchService() {
@@ -215,15 +248,96 @@ FetchService::FetchService() {
   MOZ_ASSERT(NS_IsMainThread());
 }
 
-FetchService::~FetchService() = default;
+FetchService::~FetchService() {
+  MOZ_ALWAYS_SUCCEEDS(UnregisterNetworkObserver());
+}
+
+nsresult FetchService::RegisterNetworkObserver() {
+  AssertIsOnMainThread();
+  nsCOMPtr<nsIObserverService> observerService = services::GetObserverService();
+  if (!observerService) {
+    return NS_ERROR_UNEXPECTED;
+  }
+
+  nsCOMPtr<nsIIOService> ioService = services::GetIOService();
+  if (!ioService) {
+    return NS_ERROR_UNEXPECTED;
+  }
+
+  nsresult rv = observerService->AddObserver(
+      this, NS_IOSERVICE_OFFLINE_STATUS_TOPIC, false);
+  NS_ENSURE_SUCCESS(rv, rv);
+
+  rv = observerService->AddObserver(this, "xpcom-shutdown", false);
+  NS_ENSURE_SUCCESS(rv, rv);
+
+  rv = ioService->GetOffline(&mOffline);
+  NS_ENSURE_SUCCESS(rv, rv);
+  mObservingNetwork = true;
+
+  return NS_OK;
+}
+
+nsresult FetchService::UnregisterNetworkObserver() {
+  AssertIsOnMainThread();
+  nsresult rv;
+  if (mObservingNetwork) {
+    nsCOMPtr<nsIObserverService> observerService =
+        mozilla::services::GetObserverService();
+    if (observerService) {
+      rv = observerService->RemoveObserver(this,
+                                           NS_IOSERVICE_OFFLINE_STATUS_TOPIC);
+      NS_ENSURE_SUCCESS(rv, rv);
+      rv = observerService->RemoveObserver(this, "xpcom-shutdown");
+      NS_ENSURE_SUCCESS(rv, rv);
+    }
+    mObservingNetwork = false;
+  }
+  return NS_OK;
+}
+
+NS_IMETHODIMP FetchService::Observe(nsISupports* aSubject, const char* aTopic,
+                                    const char16_t* aData) {
+  FETCH_LOG(("FetchService::Observe topic: %s", aTopic));
+  AssertIsOnMainThread();
+  MOZ_ASSERT(!strcmp(aTopic, NS_IOSERVICE_OFFLINE_STATUS_TOPIC) ||
+             !strcmp(aTopic, "xpcom-shutdown"));
+
+  if (!strcmp(aTopic, "xpcom-shutdown")) {
+    // Going to shutdown, unregister the network status observer to avoid
+    // receiving
+    nsresult rv = UnregisterNetworkObserver();
+    NS_ENSURE_SUCCESS(rv, rv);
+    return NS_OK;
+  }
+
+  if (nsDependentString(aData).EqualsLiteral(NS_IOSERVICE_ONLINE)) {
+    mOffline = false;
+  } else {
+    mOffline = true;
+    // Network is offline, cancel running fetchs.
+    for (auto it = mFetchInstanceTable.begin(), end = mFetchInstanceTable.end();
+         it != end; ++it) {
+      it->GetData()->Cancel();
+    }
+    mFetchInstanceTable.Clear();
+  }
+  return NS_OK;
+}
 
 RefPtr<FetchServiceResponsePromise> FetchService::Fetch(
     SafeRefPtr<InternalRequest> aRequest, nsIChannel* aChannel) {
   MOZ_ASSERT(XRE_IsParentProcess());
   MOZ_ASSERT(NS_IsMainThread());
 
-  FETCH_LOG(("FetchService::Fetch aRequest[%p], aChannel[%p]",
-             aRequest.unsafeGetRawPtr(), aChannel));
+  FETCH_LOG(("FetchService::Fetch aRequest[%p], aChannel[%p], mOffline: %s",
+             aRequest.unsafeGetRawPtr(), aChannel,
+             mOffline ? "true" : "false"));
+
+  if (mOffline) {
+    FETCH_LOG(("FetchService::Fetch network offline"));
+    return NetworkErrorResponse(NS_ERROR_OFFLINE);
+  }
 
   // Create FetchInstance
   RefPtr<FetchInstance> fetch = MakeRefPtr<FetchInstance>(aRequest.clonePtr());
@@ -267,7 +381,10 @@ void FetchService::CancelFetch(
 
   auto entry = mFetchInstanceTable.Lookup(aResponsePromise);
   if (entry) {
+    // Notice any modifications here before entry.Remove() probably should be
+    // reflected to Observe() offline case.
     entry.Data()->Cancel();
+
     entry.Remove();
     FETCH_LOG(("FetchService::CancelFetch aResponsePromise[%p] is removed",
                aResponsePromise.get()));

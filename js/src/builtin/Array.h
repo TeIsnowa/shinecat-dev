@@ -127,6 +127,10 @@ extern bool array_slice(JSContext* cx, unsigned argc, js::Value* vp);
 extern JSObject* ArraySliceDense(JSContext* cx, HandleObject obj, int32_t begin,
                                  int32_t end, HandleObject result);
 
+extern JSObject* ArgumentsSliceDense(JSContext* cx, HandleObject obj,
+                                     int32_t begin, int32_t end,
+                                     HandleObject result);
+
 /*
  * Append the given (non-hole) value to the end of an array.  The array must be
  * a newborn array -- that is, one which has not been exposed to script for
@@ -155,7 +159,7 @@ extern JSString* ArrayToSource(JSContext* cx, HandleObject obj);
 extern bool IsCrossRealmArrayConstructor(JSContext* cx, JSObject* obj,
                                          bool* result);
 
-extern bool ObjectMayHaveExtraIndexedProperties(JSObject* obj);
+extern bool PrototypeMayHaveIndexedProperties(NativeObject* obj);
 
 // JS::IsArray has multiple overloads, use js::IsArrayFromJit to disambiguate.
 extern bool IsArrayFromJit(JSContext* cx, HandleObject obj, bool* isArray);

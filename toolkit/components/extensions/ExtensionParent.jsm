@@ -94,12 +94,12 @@ let StartupCache;
 const global = this;
 
 function verifyActorForContext(actor, context) {
-  if (actor instanceof JSWindowActorParent) {
+  if (JSWindowActorParent.isInstance(actor)) {
     let target = actor.browsingContext.top.embedderElement;
     if (context.parentMessageManager !== target.messageManager) {
       throw new Error("Got message on unexpected message manager");
     }
-  } else if (actor instanceof JSProcessActorParent) {
+  } else if (JSProcessActorParent.isInstance(actor)) {
     if (actor.manager.remoteType !== context.extension.remoteType) {
       throw new Error("Got message from unexpected process");
     }
@@ -117,13 +117,13 @@ let apiManager = new (class extends SchemaAPIManager {
       return extension.apiManager.onStartup(extension);
     });
 
-    this.on("update", async (e, { id, resourceURI }) => {
+    this.on("update", async (e, { id, resourceURI, isPrivileged }) => {
       let modules = this.eventModules.get("update");
       if (modules.size == 0) {
         return;
       }
 
-      let extension = new ExtensionData(resourceURI);
+      let extension = new ExtensionData(resourceURI, isPrivileged);
       await extension.loadManifest();
 
       return Promise.all(
@@ -301,7 +301,7 @@ const ProxyMessenger = {
       url: source.url,
     };
 
-    if (source.actor instanceof JSWindowActorParent) {
+    if (JSWindowActorParent.isInstance(source.actor)) {
       let browser = source.actor.browsingContext.top.embedderElement;
       let data =
         browser && apiManager.global.tabTracker.getBrowserData(browser);
@@ -486,8 +486,45 @@ class ProxyContextParent extends BaseContext {
     this.listenerProxies = new Map();
 
     this.pendingEventBrowser = null;
+    this.callContextData = null;
 
     apiManager.emit("proxy-context-load", this);
+  }
+
+  /**
+   * Call the `callable` parameter with `context.callContextData` set to the value passed
+   * as the first parameter of this method.
+   *
+   * `context.callContextData` is expected to:
+   * - don't be set when context.withCallContextData is being called
+   * - be set back to null right after calling the `callable` function, without
+   *   awaiting on any async code that the function may be running internally
+   *
+   * The callable method itself is responsabile of eventually retrieve the value initially set
+   * on the `context.callContextData` before any code executed asynchronously (e.g. from a
+   * callback or after awaiting internally on a promise if the `callable` function was async).
+   *
+   * @param {object} callContextData
+   * @param {boolean} callContextData.isHandlingUserInput
+   * @param {Function} callable
+   *
+   * @returns {any} Returns the value returned by calling the `callable` method.
+   */
+  withCallContextData({ isHandlingUserInput }, callable) {
+    if (this.callContextData) {
+      Cu.reportError(
+        `Unexpected pre-existing callContextData on "${this.extension?.policy.debugName}" contextId ${this.contextId}`
+      );
+    }
+
+    try {
+      this.callContextData = {
+        isHandlingUserInput,
+      };
+      return callable();
+    } finally {
+      this.callContextData = null;
+    }
   }
 
   async withPendingBrowser(browser, callable) {
@@ -836,7 +873,7 @@ ParentAPIManager = {
         throw new Error(`Bad sender context envType: ${sender.envType}`);
       }
 
-      if (actor instanceof JSWindowActorParent) {
+      if (JSWindowActorParent.isInstance(actor)) {
         let processMessageManager =
           target.messageManager.processMessageManager ||
           Services.ppmm.getChildAt(0);
@@ -852,7 +889,7 @@ ParentAPIManager = {
             "Attempt to create privileged extension parent from incorrect child process"
           );
         }
-      } else if (actor instanceof JSProcessActorParent) {
+      } else if (JSProcessActorParent.isInstance(actor)) {
         if (actor.manager.remoteType !== extension.remoteType) {
           throw new Error(
             "Attempt to create privileged extension parent from incorrect child process"
@@ -985,10 +1022,15 @@ ParentAPIManager = {
 
     try {
       let args = data.args;
+      let { isHandlingUserInput = false } = data.options || {};
       let pendingBrowser = context.pendingEventBrowser;
       let fun = await context.apiCan.asyncFindAPIPath(data.path);
       let result = this.callAndLog(context, data, () => {
-        return context.withPendingBrowser(pendingBrowser, () => fun(...args));
+        return context.withPendingBrowser(pendingBrowser, () =>
+          context.withCallContextData({ isHandlingUserInput }, () =>
+            fun(...args)
+          )
+        );
       });
 
       if (data.callId) {
@@ -1426,6 +1468,109 @@ const DebugUtils = {
   },
 
   /**
+   * Determine if the extension does have a non-persistent background script
+   * (either an event page or a background service worker):
+   *
+   * Based on this the DevTools client will determine if this extension should provide
+   * to the extension developers a button to forcefully terminate the background
+   * script.
+   *
+   * @param {string} addonId
+   *   The id of the addon
+   *
+   * @returns {void|boolean}
+   *   - undefined => does not apply (no background script in the manifest)
+   *   - true => the background script is persistent.
+   *   - false => the background script is an event page or a service worker.
+   */
+  hasPersistentBackgroundScript(addonId) {
+    const policy = WebExtensionPolicy.getByID(addonId);
+
+    // The addon doesn't have any background script or we
+    // can't be sure yet.
+    if (
+      policy?.extension?.type !== "extension" ||
+      !policy?.extension?.manifest?.background
+    ) {
+      return undefined;
+    }
+
+    return policy.extension.persistentBackground;
+  },
+
+  /**
+   * Determine if the extension background page is running.
+   *
+   * Based on this the DevTools client will show the status of the background
+   * script in about:debugging.
+   *
+   * @param {string} addonId
+   *   The id of the addon
+   *
+   * @returns {void|boolean}
+   *   - undefined => does not apply (no background script in the manifest)
+   *   - true => the background script is running.
+   *   - false => the background script is stopped.
+   */
+  isBackgroundScriptRunning(addonId) {
+    const policy = WebExtensionPolicy.getByID(addonId);
+
+    // The addon doesn't have any background script or we
+    // can't be sure yet.
+    if (!(this.hasPersistentBackgroundScript(addonId) === false)) {
+      return undefined;
+    }
+
+    const views = policy?.extension?.views || [];
+    for (const view of views) {
+      if (
+        view.viewType === "background" ||
+        (view.viewType === "background_worker" && !view.unloaded)
+      ) {
+        return true;
+      }
+    }
+
+    return false;
+  },
+
+  async terminateBackgroundScript(addonId) {
+    // Terminate the background if the extension does have
+    // a non-persistent background script (event page or background
+    // service worker).
+    if (this.hasPersistentBackgroundScript(addonId) === false) {
+      const policy = WebExtensionPolicy.getByID(addonId);
+      // When the event page is being terminated through the Devtools
+      // action, we should terminate it even if there are DevTools
+      // toolboxes attached to the extension.
+      return policy.extension.terminateBackground({
+        ignoreDevToolsAttached: true,
+      });
+    }
+    throw Error(`Unable to terminate background script for ${addonId}`);
+  },
+
+  /**
+   * Determine whether a devtools toolbox attached to the extension.
+   *
+   * This method is called by the background page idle timeout handler,
+   * to inhibit terminating the event page when idle while the extension
+   * developer is debugging the extension through the Addon Debugging window
+   * (similarly to how service workers are kept alive while the devtools are
+   * attached).
+   *
+   * @param {string} id
+   *        The id of the extension.
+   *
+   * @returns {boolean}
+   *          true when a devtools toolbox is attached to an extension with
+   *          the given id, false otherwise.
+   */
+  hasDevToolsAttached(id) {
+    return this.debugBrowserPromises.has(id);
+  },
+
+  /**
    * Retrieve a XUL browser element which has been configured to be able to connect
    * the devtools actor with the process where the extension is running.
    *
@@ -1797,6 +1942,7 @@ StartupCache = {
     "other",
     "permissions",
     "schemas",
+    "menus",
   ]),
 
   _ensureDirectoryPromise: null,
@@ -1856,7 +2002,7 @@ StartupCache = {
 
       result = aomStartup.decodeBlob(buffer);
     } catch (e) {
-      if (!(e instanceof DOMException) || e.name !== "NotFoundError") {
+      if (!DOMException.isInstance(e) || e.name !== "NotFoundError") {
         Cu.reportError(e);
       }
     }
@@ -1878,6 +2024,7 @@ StartupCache = {
       this.locales.delete(id),
       this.manifests.delete(id),
       this.permissions.delete(id),
+      this.menus.delete(id),
     ]).catch(e => {
       // Ignore the error. It happens when we try to flush the add-on
       // data after the AddonManager has flushed the entire startup cache.

@@ -10,6 +10,7 @@
 #include "mozilla/StaticPrefs_accessibility.h"
 #include "nsAccUtils.h"
 #include "TextLeafRange.h"
+#include "TextRange.h"
 
 namespace mozilla::a11y {
 
@@ -462,6 +463,10 @@ bool HyperTextAccessibleBase::IsValidRange(int32_t aStartOffset,
          startOffset <= endOffset && endOffset <= CharacterCount();
 }
 
+uint32_t HyperTextAccessibleBase::LinkCount() {
+  return Acc()->EmbeddedChildCount();
+}
+
 Accessible* HyperTextAccessibleBase::LinkAt(uint32_t aIndex) {
   return Acc()->EmbeddedChildAt(aIndex);
 }
@@ -539,6 +544,62 @@ already_AddRefed<AccAttributes> HyperTextAccessibleBase::TextAttributes(
   std::tie(ok, *aEndOffset) = TransformOffset(end.mAcc, end.mOffset,
                                               /* aIsEndOffset */ true);
   return attributes.forget();
+}
+
+void HyperTextAccessibleBase::CroppedSelectionRanges(
+    nsTArray<TextRange>& aRanges) const {
+  SelectionRanges(&aRanges);
+  const Accessible* acc = Acc();
+  aRanges.RemoveElementsBy([acc](auto& range) {
+    if (range.StartPoint() == range.EndPoint()) {
+      return true;  // Collapsed, so remove this range.
+    }
+    // If this is the document, it contains all ranges, so there's no need to
+    // crop.
+    if (!acc->IsDoc()) {
+      // If we fail to crop, the range is outside acc, so remove it.
+      return !range.Crop(const_cast<Accessible*>(acc));
+    }
+    return false;
+  });
+}
+
+int32_t HyperTextAccessibleBase::SelectionCount() {
+  nsTArray<TextRange> ranges;
+  CroppedSelectionRanges(ranges);
+  return static_cast<int32_t>(ranges.Length());
+}
+
+bool HyperTextAccessibleBase::SelectionBoundsAt(int32_t aSelectionNum,
+                                                int32_t* aStartOffset,
+                                                int32_t* aEndOffset) {
+  nsTArray<TextRange> ranges;
+  CroppedSelectionRanges(ranges);
+  if (aSelectionNum >= static_cast<int32_t>(ranges.Length())) {
+    return false;
+  }
+  TextRange& range = ranges[aSelectionNum];
+  Accessible* thisAcc = Acc();
+  if (range.StartContainer() == thisAcc) {
+    *aStartOffset = range.StartOffset();
+  } else {
+    bool ok;
+    // range.StartContainer() isn't a text leaf, so don't use its offset.
+    std::tie(ok, *aStartOffset) =
+        TransformOffset(range.StartContainer(), 0, /* aDescendToEnd */ false);
+  }
+  if (range.EndContainer() == thisAcc) {
+    *aEndOffset = range.EndOffset();
+  } else {
+    bool ok;
+    // range.EndContainer() isn't a text leaf, so don't use its offset. If
+    // range.EndOffset() is > 0, we want to include this container, so pas
+    // offset 1.
+    std::tie(ok, *aEndOffset) =
+        TransformOffset(range.EndContainer(), range.EndOffset() == 0 ? 0 : 1,
+                        /* aDescendToEnd */ true);
+  }
+  return true;
 }
 
 }  // namespace mozilla::a11y

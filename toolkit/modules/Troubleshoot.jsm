@@ -63,8 +63,12 @@ const PREFS_FOR_DISPLAY = [
   "doh-rollout.",
   "dom.",
   "extensions.checkCompatibility",
+  "extensions.eventPages.enabled",
   "extensions.formautofill.",
   "extensions.lastAppVersion",
+  "extensions.manifestV3.enabled",
+  "extensions.InstallTrigger.enabled",
+  "extensions.InstallTriggerImpl.enabled",
   "fission.autostart",
   "font.",
   "general.autoScroll",
@@ -107,7 +111,6 @@ const PREFS_FOR_DISPLAY = [
   "widget.use-xdg-desktop-portal",
   "widget.use-xdg-desktop-portal.file-picker",
   "widget.use-xdg-desktop-portal.mime-handler",
-  "widget.use-xdg-desktop-portal.print",
   "widget.gtk.overlay-scrollbars.enabled",
   "widget.wayland",
 ];
@@ -220,6 +223,9 @@ var dataProviders = {
         Ci.nsIHttpProtocolHandler
       ).userAgent,
       safeMode: Services.appinfo.inSafeMode,
+      memorySizeBytes: Services.sysinfo.getProperty("memsize"),
+      diskAvailableBytes: Services.dirsvc.get("ProfD", Ci.nsIFile)
+        .diskSpaceAvailable,
     };
 
     if (Services.sysinfo.getProperty("name") == "Windows_NT") {
@@ -230,8 +236,7 @@ var dataProviders = {
 
     if (AppConstants.MOZ_UPDATER) {
       data.updateChannel = ChromeUtils.import(
-        "resource://gre/modules/UpdateUtils.jsm",
-        {}
+        "resource://gre/modules/UpdateUtils.jsm"
       ).UpdateUtils.UpdateChannel;
     }
 

@@ -939,8 +939,8 @@ class ContentParent final
       const uint32_t& chromeFlags);
 
   mozilla::ipc::IPCResult RecvIsSecureURI(
-      nsIURI* aURI, const uint32_t& aFlags,
-      const OriginAttributes& aOriginAttributes, bool* aIsSecureURI);
+      nsIURI* aURI, const OriginAttributes& aOriginAttributes,
+      bool* aIsSecureURI);
 
   mozilla::ipc::IPCResult RecvAccumulateMixedContentHSTS(
       nsIURI* aURI, const bool& aActive,
@@ -1032,6 +1032,10 @@ class ContentParent final
       const int32_t& aWhichClipboard, const bool& aPlainTextOnly,
       nsTArray<nsCString>* aTypes);
 
+  mozilla::ipc::IPCResult RecvGetClipboardAsync(
+      nsTArray<nsCString>&& aTypes, const int32_t& aWhichClipboard,
+      GetClipboardAsyncResolver&& aResolver);
+
   mozilla::ipc::IPCResult RecvPlaySound(nsIURI* aURI);
   mozilla::ipc::IPCResult RecvBeep();
   mozilla::ipc::IPCResult RecvPlayEventSound(const uint32_t& aEventId);
@@ -1062,7 +1066,7 @@ class ContentParent final
       nsIURI* uri, nsIPrincipal* triggeringPrincipal,
       nsIPrincipal* redirectPrincipal,
       const MaybeDiscarded<BrowsingContext>& aContext,
-      bool aWasExternallyTriggered);
+      bool aWasExternallyTriggered, bool aHasValidUserGestureActivation);
   mozilla::ipc::IPCResult RecvExtProtocolChannelConnectParent(
       const uint64_t& registrarId);
 
@@ -1105,6 +1109,12 @@ class ContentParent final
       const bool& aIsFromChromeContext, const ClonedMessageData& aStack);
 
  private:
+  // Gets the clipboard data for the first type of aTypes that matches and
+  // fills out aDataTransfer.
+  nsresult GetDataFromClipboard(const nsTArray<nsCString>& aTypes,
+                                int32_t aWhichClipboard, bool aInSyncMessage,
+                                IPCDataTransfer* aDataTransfer);
+
   mozilla::ipc::IPCResult RecvScriptErrorInternal(
       const nsString& aMessage, const nsString& aSourceName,
       const nsString& aSourceLine, const uint32_t& aLineNumber,
@@ -1131,6 +1141,9 @@ class ContentParent final
 
   mozilla::ipc::IPCResult RecvCopyFavicon(nsIURI* aOldURI, nsIURI* aNewURI,
                                           const bool& aInPrivateBrowsing);
+
+  mozilla::ipc::IPCResult RecvFindImageText(ShmemImage&&,
+                                            FindImageTextResolver&&);
 
   virtual void ProcessingError(Result aCode, const char* aMsgName) override;
 
@@ -1576,6 +1589,10 @@ class ContentParent final
   uint8_t mIsInputPriorityEventEnabled : 1;
 
   uint8_t mIsInPool : 1;
+
+#ifdef DEBUG
+  bool mBlockShutdownCalled;
+#endif
 
   nsCOMPtr<nsIContentProcessInfo> mScriptableHelper;
 

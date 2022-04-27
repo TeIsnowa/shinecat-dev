@@ -32,10 +32,11 @@ class UiCompositorControllerChild final
   NS_INLINE_DECL_THREADSAFE_REFCOUNTING(UiCompositorControllerChild)
 
   static RefPtr<UiCompositorControllerChild> CreateForSameProcess(
-      const LayersId& aRootLayerTreeId);
+      const LayersId& aRootLayerTreeId, nsBaseWidget* aWidget);
   static RefPtr<UiCompositorControllerChild> CreateForGPUProcess(
       const uint64_t& aProcessToken,
-      Endpoint<PUiCompositorControllerChild>&& aEndpoint);
+      Endpoint<PUiCompositorControllerChild>&& aEndpoint,
+      nsBaseWidget* aWidget);
 
   bool Pause();
   bool Resume();
@@ -51,7 +52,6 @@ class UiCompositorControllerChild final
 
   void Destroy();
 
-  void SetBaseWidget(nsBaseWidget* aWidget);
   bool DeallocPixelBuffer(Shmem& aMem);
 
 #ifdef MOZ_WIDGET_ANDROID
@@ -70,8 +70,9 @@ class UiCompositorControllerChild final
   // Note that this function does not actually use the PUiCompositorController
   // IPDL protocol, and instead uses Android's binder IPC mechanism via
   // mCompositorSurfaceManager. It can be called from any thread.
-  void OnCompositorSurfaceChanged(int32_t aWidgetId,
-                                  java::sdk::Surface::Param aSurface);
+  void OnCompositorSurfaceChanged(
+      int32_t aWidgetId, java::sdk::Surface::Param aSurface,
+      java::sdk::SurfaceControl::Param aSurfaceControl);
 #endif
 
  protected:
@@ -88,7 +89,8 @@ class UiCompositorControllerChild final
                                            bool aNeedsYFlip);
 
  private:
-  explicit UiCompositorControllerChild(const uint64_t& aProcessToken);
+  explicit UiCompositorControllerChild(const uint64_t& aProcessToken,
+                                       nsBaseWidget* aWidget);
   virtual ~UiCompositorControllerChild();
   void OpenForSameProcess();
   void OpenForGPUProcess(Endpoint<PUiCompositorControllerChild>&& aEndpoint);

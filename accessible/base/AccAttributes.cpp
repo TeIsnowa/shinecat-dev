@@ -5,6 +5,7 @@
 
 #include "AccAttributes.h"
 #include "StyleInfo.h"
+#include "mozilla/ToString.h"
 
 using namespace mozilla::a11y;
 
@@ -65,6 +66,16 @@ void AccAttributes::StringFromValueAndName(nsAtom* aAttrName,
       [&aValueString](const uint64_t& val) { aValueString.AppendInt(val); },
       [&aValueString](const UniquePtr<AccGroupInfo>& val) {
         aValueString.Assign(u"AccGroupInfo{...}");
+      },
+      [&aValueString](const UniquePtr<gfx::Matrix4x4>& val) {
+        aValueString.AppendPrintf("Matrix4x4=%s", ToString(*val).c_str());
+      },
+      [&aValueString](const nsTArray<uint64_t>& val) {
+        for (size_t i = 0; i < val.Length() - 1; i++) {
+          aValueString.AppendInt(val[i]);
+          aValueString.Append(u", ");
+        }
+        aValueString.AppendInt(val[val.Length() - 1]);
       });
 }
 
@@ -157,6 +168,15 @@ void AccAttributes::CopyTo(AccAttributes* aDest) const {
         [](const UniquePtr<AccGroupInfo>& val) {
           MOZ_ASSERT_UNREACHABLE(
               "Trying to copy an AccAttributes containing an AccGroupInfo");
+        },
+        [](const UniquePtr<gfx::Matrix4x4>& val) {
+          MOZ_ASSERT_UNREACHABLE(
+              "Trying to copy an AccAttributes containing a matrix");
+        },
+        [](const nsTArray<uint64_t>& val) {
+          // We don't copy arrays.
+          MOZ_ASSERT_UNREACHABLE(
+              "Trying to copy an AccAttributes containing an array");
         });
   }
 }

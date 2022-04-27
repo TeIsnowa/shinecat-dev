@@ -479,6 +479,7 @@ void HTMLCanvasElement::Destroy() {
   if (mOffscreenDisplay) {
     mOffscreenDisplay->Destroy();
     mOffscreenDisplay = nullptr;
+    mImageContainer = nullptr;
   }
 
   if (mContextObserver) {
@@ -1190,14 +1191,6 @@ void HTMLCanvasElement::SetHeight(uint32_t aHeight, ErrorResult& aRv) {
 
 void HTMLCanvasElement::InvalidateCanvasPlaceholder(uint32_t aWidth,
                                                     uint32_t aHeight) {
-  // We need to keep our placeholder canvas dimensions in sync with the actual
-  // offscreen canvas. It is only a placeholder if we transferred the object to
-  // a worker thread.
-  if (mOffscreenCanvas->IsNeutered()) {
-    mOffscreenCanvas->UpdateNeuteredSize(aWidth, aHeight);
-  }
-
-  // We always need to update the canvas element itself however.
   ErrorResult rv;
   SetUnsignedIntAttr(nsGkAtoms::width, aWidth, DEFAULT_CANVAS_WIDTH, rv);
   MOZ_ASSERT(!rv.Failed());
@@ -1206,6 +1199,11 @@ void HTMLCanvasElement::InvalidateCanvasPlaceholder(uint32_t aWidth,
 }
 
 void HTMLCanvasElement::InvalidateCanvasContent(const gfx::Rect* damageRect) {
+  // Cache the current ImageContainer to avoid contention on the mutex.
+  if (mOffscreenDisplay) {
+    mImageContainer = mOffscreenDisplay->GetImageContainer();
+  }
+
   // We don't need to flush anything here; if there's no frame or if
   // we plan to reframe we don't need to invalidate it anyway.
   nsIFrame* frame = GetPrimaryFrame();
@@ -1279,8 +1277,9 @@ bool HTMLCanvasElement::GetOpaqueAttr() {
 }
 
 CanvasContextType HTMLCanvasElement::GetCurrentContextType() {
-  if (mOffscreenDisplay) {
-    return mOffscreenDisplay->GetContextType();
+  if (mCurrentContextType == CanvasContextType::NoContext &&
+      mOffscreenDisplay) {
+    mCurrentContextType = mOffscreenDisplay->GetContextType();
   }
   return mCurrentContextType;
 }
@@ -1479,11 +1478,11 @@ webgpu::CanvasContext* HTMLCanvasElement::GetWebGPUContext() {
   return static_cast<webgpu::CanvasContext*>(GetCurrentContext());
 }
 
-RefPtr<ImageContainer> HTMLCanvasElement::GetImageContainer() {
+CompositableHandle HTMLCanvasElement::GetCompositableHandle() const {
   if (mOffscreenDisplay) {
-    return mOffscreenDisplay->GetImageContainer();
+    return mOffscreenDisplay->GetCompositableHandle();
   }
-  return nullptr;
+  return CompositableHandle();
 }
 
 }  // namespace mozilla::dom

@@ -374,6 +374,36 @@ xpcAccessible::GetAttributes(nsIPersistentProperties** aAttributes) {
 }
 
 NS_IMETHODIMP
+xpcAccessible::GetCache(nsIPersistentProperties** aCachedFields) {
+  NS_ENSURE_ARG_POINTER(aCachedFields);
+  *aCachedFields = nullptr;
+
+  if (!IntlGeneric()) {
+    return NS_ERROR_FAILURE;
+  }
+
+  RefPtr<nsPersistentProperties> props = new nsPersistentProperties();
+  if (IntlGeneric()->IsRemote()) {
+    RefPtr<AccAttributes> cachedFields =
+        IntlGeneric()->AsRemote()->mCachedFields;
+
+    nsAutoString unused;
+    for (auto iter : *cachedFields) {
+      nsAutoString name;
+      iter.NameAsString(name);
+
+      nsAutoString value;
+      iter.ValueAsString(value);
+
+      props->SetStringProperty(NS_ConvertUTF16toUTF8(name), value, unused);
+    }
+  }
+
+  props.forget(aCachedFields);
+  return NS_OK;
+}
+
+NS_IMETHODIMP
 xpcAccessible::GetNativeInterface(nsISupports** aNativeInterface) {
 #ifdef MOZ_WIDGET_COCOA
   NS_ENSURE_ARG_POINTER(aNativeInterface);
@@ -736,17 +766,7 @@ NS_IMETHODIMP
 xpcAccessible::ScrollTo(uint32_t aHow) {
   if (!IntlGeneric()) return NS_ERROR_FAILURE;
 
-  if (RemoteAccessible* proxy = IntlGeneric()->AsRemote()) {
-#if defined(XP_WIN)
-    return NS_ERROR_NOT_IMPLEMENTED;
-#else
-    proxy->ScrollTo(aHow);
-#endif
-  } else {
-    RefPtr<LocalAccessible> intl = Intl();
-    intl->ScrollTo(aHow);
-  }
-
+  IntlGeneric()->ScrollTo(aHow);
   return NS_OK;
 }
 

@@ -905,7 +905,6 @@ bool WarpBuilder::build_RetRval(BytecodeLocation) {
 
 bool WarpBuilder::build_SetRval(BytecodeLocation) {
   MOZ_ASSERT(!script_->noScriptRval());
-
   MDefinition* rval = current->pop();
   current->setSlot(info().returnValueSlot(), rval);
   return true;
@@ -1503,6 +1502,14 @@ bool WarpBuilder::build_Goto(BytecodeLocation loc) {
   return buildForwardGoto(loc.getJumpTarget());
 }
 
+bool WarpBuilder::build_IsNullOrUndefined(BytecodeLocation loc) {
+  MDefinition* value = current->peek(-1);
+  auto* isNullOrUndef = MIsNullOrUndefined::New(alloc(), value);
+  current->add(isNullOrUndef);
+  current->push(isNullOrUndef);
+  return true;
+}
+
 bool WarpBuilder::build_DebugCheckSelfHosted(BytecodeLocation loc) {
 #ifdef DEBUG
   MDefinition* val = current->pop();
@@ -1868,14 +1875,6 @@ bool WarpBuilder::build_CallIgnoresRv(BytecodeLocation loc) {
 }
 
 bool WarpBuilder::build_CallIter(BytecodeLocation loc) {
-  return buildCallOp(loc);
-}
-
-bool WarpBuilder::build_FunCall(BytecodeLocation loc) {
-  return buildCallOp(loc);
-}
-
-bool WarpBuilder::build_FunApply(BytecodeLocation loc) {
   return buildCallOp(loc);
 }
 
@@ -2629,14 +2628,7 @@ bool WarpBuilder::build_Instanceof(BytecodeLocation loc) {
 bool WarpBuilder::build_NewTarget(BytecodeLocation loc) {
   MOZ_ASSERT(script_->isFunction());
   MOZ_ASSERT(info().hasFunMaybeLazy());
-
-  if (scriptSnapshot()->isArrowFunction()) {
-    MDefinition* callee = getCallee();
-    MArrowNewTarget* ins = MArrowNewTarget::New(alloc(), callee);
-    current->add(ins);
-    current->push(ins);
-    return true;
-  }
+  MOZ_ASSERT(!scriptSnapshot()->isArrowFunction());
 
   if (inlineCallInfo()) {
     if (inlineCallInfo()->constructing()) {
@@ -2750,6 +2742,10 @@ bool WarpBuilder::build_InitElem(BytecodeLocation loc) {
   return buildIC(loc, CacheKind::SetElem, {obj, id, val});
 }
 
+bool WarpBuilder::build_InitLockedElem(BytecodeLocation loc) {
+  return build_InitElem(loc);
+}
+
 bool WarpBuilder::build_InitHiddenElem(BytecodeLocation loc) {
   return build_InitElem(loc);
 }
@@ -2808,21 +2804,6 @@ bool WarpBuilder::build_Lambda(BytecodeLocation loc) {
   MConstant* funConst = constant(ObjectValue(*fun));
 
   auto* ins = MLambda::New(alloc(), env, funConst);
-  current->add(ins);
-  current->push(ins);
-  return resumeAfter(ins, loc);
-}
-
-bool WarpBuilder::build_LambdaArrow(BytecodeLocation loc) {
-  MOZ_ASSERT(usesEnvironmentChain());
-
-  MDefinition* env = current->environmentChain();
-  MDefinition* newTarget = current->pop();
-
-  JSFunction* fun = loc.getFunction(script_);
-  MConstant* funConst = constant(ObjectValue(*fun));
-
-  auto* ins = MLambdaArrow::New(alloc(), env, newTarget, funConst);
   current->add(ins);
   current->push(ins);
   return resumeAfter(ins, loc);
@@ -3034,9 +3015,6 @@ bool WarpBuilder::build_Rest(BytecodeLocation loc) {
 }
 
 bool WarpBuilder::build_Try(BytecodeLocation loc) {
-  // Note: WarpOracle aborts compilation for try-statements with a 'finally'
-  // block.
-
   graph().setHasTryBlock();
 
   MBasicBlock* pred = current;
@@ -3045,6 +3023,11 @@ bool WarpBuilder::build_Try(BytecodeLocation loc) {
   }
 
   pred->end(MGoto::New(alloc(), current));
+  return true;
+}
+
+bool WarpBuilder::build_Finally(BytecodeLocation loc) {
+  MOZ_ASSERT(graph().hasTryBlock());
   return true;
 }
 
@@ -3395,7 +3378,7 @@ bool WarpBuilder::buildInlinedCall(BytecodeLocation loc,
     return false;
   }
   MResumePoint* outerResumePoint =
-      MResumePoint::New(alloc(), current, pc, MResumePoint::Outer);
+      MResumePoint::New(alloc(), current, pc, callInfo.inliningResumeMode());
   if (!outerResumePoint) {
     return false;
   }

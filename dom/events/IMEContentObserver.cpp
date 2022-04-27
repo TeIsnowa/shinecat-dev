@@ -607,6 +607,12 @@ nsresult IMEContentObserver::HandleQueryContentEvent(
     }
     aEvent->mReply->mContentsRoot = mRootContent;
     aEvent->mReply->mWritingMode = mSelectionData.GetWritingMode();
+    // The selection cache in IMEContentObserver must always have been in
+    // an editing host (or an editable annoymous <div> element).  Therefore,
+    // we set mIsEditableContent to true here even though it's already been
+    // blurred or changed its editable state but the selection cache has not
+    // been invalidated yet.
+    aEvent->mReply->mIsEditableContent = true;
     MOZ_LOG(sIMECOLog, LogLevel::Debug,
             ("0x%p HandleQueryContentEvent(aEvent={ "
              "mMessage=%s, mReply=%s })",
@@ -784,6 +790,15 @@ void IMEContentObserver::CharacterDataChanged(
   if (!aContent->IsText()) {
     return;  // Ignore if it's a comment node or something other invisible data
              // node.
+  }
+
+  // Let TextComposition have a change to update composition string range in
+  // the text node if the change is caused by the web apps.
+  if (mWidget && !IsEditorHandlingEventForComposition()) {
+    if (RefPtr<TextComposition> composition =
+            IMEStateManager::GetTextCompositionFor(mWidget)) {
+      composition->OnCharacterDataChanged(*aContent->AsText(), aInfo);
+    }
   }
 
   if (!NeedsTextChangeNotification() ||

@@ -42,8 +42,8 @@ pub use self::basic_shape::FillRule;
 pub use self::border::{BorderCornerRadius, BorderRadius, BorderSpacing};
 pub use self::border::{BorderImageRepeat, BorderImageSideWidth};
 pub use self::border::{BorderImageSlice, BorderImageWidth};
-pub use self::box_::{AnimationIterationCount, AnimationName, AnimationTimeline, Contain};
-pub use self::box_::{Appearance, BreakBetween, BreakWithin, Clear, Float};
+pub use self::box_::{AnimationIterationCount, AnimationName, AnimationTimeline, Contain, ContainerName, ContainerType};
+pub use self::box_::{Appearance, BreakBetween, BreakWithin, Clear, ContentVisibility, Float};
 pub use self::box_::{Display, Overflow, OverflowAnchor, TransitionProperty};
 pub use self::box_::{OverflowClipBox, OverscrollBehavior, Perspective, Resize, ScrollbarGutter};
 pub use self::box_::{ScrollSnapAlign, ScrollSnapAxis, ScrollSnapStrictness, ScrollSnapType};
@@ -95,6 +95,7 @@ pub use self::transform::{TransformOrigin, TransformStyle, Translate};
 pub use self::ui::CursorImage;
 pub use self::ui::{Cursor, MozForceBrokenImageIcon, UserSelect};
 pub use super::specified::TextTransform;
+pub use super::specified::ViewportVariant;
 pub use super::specified::{BorderStyle, TextDecorationLine};
 pub use super::{Auto, Either, None_};
 pub use app_units::Au;
@@ -214,10 +215,13 @@ impl<'a> Context<'a> {
     }
 
     /// The current viewport size, used to resolve viewport units.
-    pub fn viewport_size_for_viewport_unit_resolution(&self) -> default::Size2D<Au> {
+    pub fn viewport_size_for_viewport_unit_resolution(
+        &self,
+        variant: ViewportVariant,
+    ) -> default::Size2D<Au> {
         self.builder
             .device
-            .au_viewport_size_for_viewport_unit_resolution()
+            .au_viewport_size_for_viewport_unit_resolution(variant)
     }
 
     /// The default computed style we're getting our reset style from.

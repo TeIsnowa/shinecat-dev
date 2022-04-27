@@ -203,8 +203,10 @@ bool RetainedDisplayListBuilder::PreProcessDisplayList(
       aList->mDAG.Length() ==
           (initializeOldItems ? aList->Length() : aList->mOldItems.Length()));
 
+  nsDisplayList out(Builder());
+
   size_t i = 0;
-  for (nsDisplayItem* item : aList->TakeItems()) {
+  while (nsDisplayItem* item = aList->RemoveBottom()) {
 #ifdef MOZ_DIAGNOSTIC_ASSERT_ENABLED
     item->SetMergedPreProcessed(false, true);
 #endif
@@ -341,12 +343,16 @@ bool RetainedDisplayListBuilder::PreProcessDisplayList(
       if (item->GetType() == DisplayItemType::TYPE_SUBDOCUMENT) {
         IncrementSubDocPresShellPaintCount(item);
       }
-      aList->AppendToTop(item);
+      out.AppendToTop(item);
     }
     i++;
   }
 
   MOZ_RELEASE_ASSERT(aList->mOldItems.Length() == aList->mDAG.Length());
+
+  if (aKeepLinked) {
+    aList->AppendToTop(&out);
+  }
 
   return true;
 }
@@ -590,10 +596,12 @@ class MergeState {
       return true;
     }
 
-    if (type == DisplayItemType::TYPE_SUBDOCUMENT) {
+    if (type == DisplayItemType::TYPE_SUBDOCUMENT ||
+        type == DisplayItemType::TYPE_STICKY_POSITION) {
       // nsDisplaySubDocument::mShouldFlatten can change without an invalidation
       // (and is the reason we unconditionally build the subdocument item), so
       // always use the new one to make sure we get the right value.
+      // Same for |nsDisplayStickyPosition::mShouldFlatten|.
       return true;
     }
 

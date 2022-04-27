@@ -447,10 +447,10 @@ class MacroAssemblerX86Shared : public Assembler {
   void extractLaneInt8x16(FloatRegister input, Register output, unsigned lane,
                           SimdSign sign);
 
-  void replaceLaneFloat32x4(FloatRegister rhs, FloatRegister lhsDest,
-                            unsigned lane);
-  void replaceLaneFloat64x2(FloatRegister rhs, FloatRegister lhsDest,
-                            unsigned lane);
+  void replaceLaneFloat32x4(unsigned lane, FloatRegister lhs, FloatRegister rhs,
+                            FloatRegister dest);
+  void replaceLaneFloat64x2(unsigned lane, FloatRegister lhs, FloatRegister rhs,
+                            FloatRegister dest);
 
   void shuffleInt8x16(FloatRegister lhs, FloatRegister rhs,
                       FloatRegister output, const uint8_t lanes[16]);
@@ -479,6 +479,9 @@ class MacroAssemblerX86Shared : public Assembler {
   void compareForOrderingInt64x2(FloatRegister lhs, Operand rhs,
                                  Assembler::Condition cond, FloatRegister temp1,
                                  FloatRegister temp2, FloatRegister output);
+  void compareForOrderingInt64x2AVX(FloatRegister lhs, FloatRegister rhs,
+                                    Assembler::Condition cond,
+                                    FloatRegister output);
   void compareFloat32x4(FloatRegister lhs, Operand rhs,
                         Assembler::Condition cond, FloatRegister output);
   void compareFloat32x4(Assembler::Condition cond, FloatRegister lhs,
@@ -890,16 +893,16 @@ class MacroAssemblerX86Shared : public Assembler {
     }
   }
 
-  void emitSetRegisterIfZero(Register dest) {
+  void emitSetRegisterIf(AssemblerX86Shared::Condition cond, Register dest) {
     if (AllocatableGeneralRegisterSet(Registers::SingleByteRegs).has(dest)) {
       // If the register we're defining is a single byte register,
       // take advantage of the setCC instruction
-      setCC(AssemblerX86Shared::Zero, dest);
+      setCC(cond, dest);
       movzbl(dest, dest);
     } else {
       Label end;
       movl(Imm32(1), dest);
-      j(AssemblerX86Shared::Zero, &end);
+      j(cond, &end);
       mov(ImmWord(0), dest);
       bind(&end);
     }

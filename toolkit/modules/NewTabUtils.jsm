@@ -16,10 +16,9 @@ let shortURL = {};
 let searchShortcuts = {};
 let didSuccessfulImport = false;
 try {
-  ChromeUtils.import("resource://activity-stream/lib/ShortURL.jsm", shortURL);
-  ChromeUtils.import(
-    "resource://activity-stream/lib/SearchShortcuts.jsm",
-    searchShortcuts
+  shortURL = ChromeUtils.import("resource://activity-stream/lib/ShortURL.jsm");
+  searchShortcuts = ChromeUtils.import(
+    "resource://activity-stream/lib/SearchShortcuts.jsm"
   );
   didSuccessfulImport = true;
 } catch (e) {
@@ -58,10 +57,9 @@ ChromeUtils.defineModuleGetter(
 
 let BrowserWindowTracker;
 try {
-  ChromeUtils.import(
-    "resource:///modules/BrowserWindowTracker.jsm",
-    BrowserWindowTracker
-  );
+  BrowserWindowTracker = ChromeUtils.import(
+    "resource:///modules/BrowserWindowTracker.jsm"
+  ).BrowserWindowTracker;
 } catch (e) {
   // BrowserWindowTracker is used to determine devicePixelRatio in
   // _addFavicons. We fallback to the value 2 if we can't find a window,
@@ -741,6 +739,8 @@ var PlacesProvider = {
  * history changes.
  */
 var ActivityStreamProvider = {
+  THUMB_FAVICON_SIZE: 96,
+
   /**
    * Shared adjustment for selecting potentially blocked links.
    */
@@ -879,7 +879,10 @@ var ActivityStreamProvider = {
     // Fetch the largest icon available.
     let faviconData;
     try {
-      faviconData = await PlacesUtils.promiseFaviconData(aUri, 0);
+      faviconData = await PlacesUtils.promiseFaviconData(
+        aUri,
+        this.THUMB_FAVICON_SIZE
+      );
       Object.assign(iconData, {
         favicon: faviconData.data,
         faviconLength: faviconData.dataLen,

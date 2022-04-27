@@ -5,6 +5,7 @@
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
+#include "base/message_loop.h"  // for MessageLoop
 #include "nsWaylandDisplay.h"
 #include "DMABufLibWrapper.h"
 #include "mozilla/StaticPrefs_widget.h"
@@ -26,7 +27,7 @@ namespace widget {
 // Use static lock to protect dri operation as
 // gbm_dri.c is not thread safe.
 // https://gitlab.freedesktop.org/mesa/mesa/-/issues/4422
-mozilla::StaticMutex nsGbmLib::sDRILock;
+mozilla::StaticMutex nsGbmLib::sDRILock MOZ_UNANNOTATED;
 
 void* nsGbmLib::sGbmLibHandle = nullptr;
 void* nsGbmLib::sXf86DrmLibHandle = nullptr;

@@ -156,7 +156,15 @@ set_define("ENABLE_RECORD_TUPLE", enable_record_tuple)
 def jit_default(target, enable_record_tuple):
     if enable_record_tuple:
         return False
-    if target.cpu in ("x86", "x86_64", "arm", "aarch64", "mips32", "mips64"):
+    if target.cpu in (
+        "x86",
+        "x86_64",
+        "arm",
+        "aarch64",
+        "mips32",
+        "mips64",
+        "loongarch64",
+    ):
         return True
     return False
 
@@ -176,7 +184,7 @@ def report_deprecated(value):
 # =======================================================
 option(
     "--enable-simulator",
-    choices=("arm", "arm64", "mips32", "mips64"),
+    choices=("arm", "arm64", "mips32", "mips64", "loong64"),
     nargs=1,
     help="Enable a JIT code simulator for the specified architecture",
 )
@@ -193,7 +201,7 @@ def simulator(jit_enabled, simulator_enabled, target):
         if target.cpu != "x86":
             die("The %s simulator only works on x86." % sim_cpu)
 
-    if sim_cpu in ("arm64", "mips64"):
+    if sim_cpu in ("arm64", "mips64", "loong64"):
         if target.cpu != "x86_64":
             die("The %s simulator only works on x86-64." % sim_cpu)
 
@@ -205,11 +213,13 @@ set_config("JS_SIMULATOR_ARM", simulator.arm)
 set_config("JS_SIMULATOR_ARM64", simulator.arm64)
 set_config("JS_SIMULATOR_MIPS32", simulator.mips32)
 set_config("JS_SIMULATOR_MIPS64", simulator.mips64)
+set_config("JS_SIMULATOR_LOONG64", simulator.loong64)
 set_define("JS_SIMULATOR", depends_if(simulator)(lambda x: True))
 set_define("JS_SIMULATOR_ARM", simulator.arm)
 set_define("JS_SIMULATOR_ARM64", simulator.arm64)
 set_define("JS_SIMULATOR_MIPS32", simulator.mips32)
 set_define("JS_SIMULATOR_MIPS64", simulator.mips64)
+set_define("JS_SIMULATOR_LOONG64", simulator.loong64)
 
 
 @depends("--enable-jit", simulator, target)
@@ -233,6 +243,7 @@ set_config("JS_CODEGEN_ARM", jit_codegen.arm)
 set_config("JS_CODEGEN_ARM64", jit_codegen.arm64)
 set_config("JS_CODEGEN_MIPS32", jit_codegen.mips32)
 set_config("JS_CODEGEN_MIPS64", jit_codegen.mips64)
+set_config("JS_CODEGEN_LOONG64", jit_codegen.loong64)
 set_config("JS_CODEGEN_X86", jit_codegen.x86)
 set_config("JS_CODEGEN_X64", jit_codegen.x64)
 set_define("JS_CODEGEN_NONE", jit_codegen.none)
@@ -240,6 +251,7 @@ set_define("JS_CODEGEN_ARM", jit_codegen.arm)
 set_define("JS_CODEGEN_ARM64", jit_codegen.arm64)
 set_define("JS_CODEGEN_MIPS32", jit_codegen.mips32)
 set_define("JS_CODEGEN_MIPS64", jit_codegen.mips64)
+set_define("JS_CODEGEN_LOONG64", jit_codegen.loong64)
 set_define("JS_CODEGEN_X86", jit_codegen.x86)
 set_define("JS_CODEGEN_X64", jit_codegen.x64)
 
@@ -821,6 +833,54 @@ def wasm_simd(value, jit_enabled, simulator, cranelift_enabled, target):
 set_config("ENABLE_WASM_SIMD", wasm_simd)
 set_define("ENABLE_WASM_SIMD", wasm_simd)
 
+
+# Support for Intel AVX instruction.
+#
+# AVX is exclusively used in WebAssembly SIMD instructions at the moment:
+# set direct dependency on "--enable-wasm-simd".
+# =====================================================
+
+
+@depends("--enable-wasm-simd", "--enable-simulator", target)
+def default_wasm_avx(wasm_simd_enabled, simulator, target):
+    if not wasm_simd_enabled:
+        return
+
+    if simulator:
+        return
+
+    if target.cpu in ("x86_64", "x86"):
+        return True
+
+
+option(
+    "--enable-wasm-avx",
+    default=default_wasm_avx,
+    help="{Enable|Disable} AVX support for WebAssembly SIMD",
+)
+
+
+@depends("--enable-wasm-avx", "--enable-wasm-simd", "--enable-simulator", target)
+def wasm_avx(value, wasm_simd_enabled, simulator, target):
+    if not value:
+        return
+
+    if not wasm_simd_enabled:
+        die("--enable-wasm-avx requires --enable-wasm-simd")
+
+    if simulator:
+        die("--enable-wasm-avx is not supported for simulators")
+
+    if target.cpu in ("x86_64", "x86"):
+        return True
+
+    die("--enable-wasm-avx only possible when targeting the x86_64/x86 jits")
+
+
+set_config("ENABLE_WASM_AVX", wasm_avx)
+set_define("ENABLE_WASM_AVX", wasm_avx)
+
+
 # Wormhole opcodes are Intel-only.  They are private to Firefox, but we need them for some
 # experiments on release and so they ride the trains.
 
@@ -1044,7 +1104,7 @@ set_define(
 # ======================================================
 system_lib_option("--with-system-icu", help="Use system ICU")
 
-system_icu = pkg_check_modules("MOZ_ICU", "icu-i18n >= 70.1", when="--with-system-icu")
+system_icu = pkg_check_modules("MOZ_ICU", "icu-i18n >= 71.1", when="--with-system-icu")
 
 
 @depends("--with-system-icu")
@@ -1129,12 +1189,9 @@ set_define(
 # ==================================
 
 
-@depends(milestone.is_nightly, "--enable-cranelift")
-def default_wasm_exceptions(is_nightly, cranelift_enabled):
+@depends("--enable-cranelift")
+def default_wasm_exceptions(cranelift_enabled):
     if cranelift_enabled:
-        return
-
-    if not is_nightly:
         return
 
     return True
@@ -1165,11 +1222,13 @@ set_define("ENABLE_WASM_EXCEPTIONS", wasm_exceptions)
 # ===================================================
 
 
-set_define(
-    "_WASI_EMULATED_PROCESS_CLOCKS",
-    True,
-    when=depends(target)(lambda t: t.os == "WASI"),
-)
+@depends(target.os)
+def is_wasi_target(os):
+    return os == "WASI"
+
+
+set_define("_WASI_EMULATED_PROCESS_CLOCKS", True, when=is_wasi_target)
+set_define("_WASI_EMULATED_GETPID", True, when=is_wasi_target)
 
 # Enable change-array-by-copy
 # ===================================================

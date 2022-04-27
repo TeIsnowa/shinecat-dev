@@ -11,6 +11,7 @@ let targets;
 let commands;
 let breakpoints;
 
+// The maximal number of stackframes to retrieve when pausing
 const CALL_STACK_PAGE_SIZE = 1000;
 
 function setupCommands(innerCommands) {
@@ -319,17 +320,7 @@ async function pauseOnExceptions(
 }
 
 async function blackBox(sourceActor, shouldBlackBox, ranges) {
-  // @backward-compat { version 98 } Introduced the Blackboxing actor
-  //                  The trait can be removed, but as for other code of this module,
-  //                  we still have to support cases where we don't support the Watcher actor at all.
-  //                  For example in the regular non-multiprocess browser toolbox.
-  //                  There, we still have to communicate with each individual source front.
-  //  Once we drop 97 support, we can do:
-  //  const hasWatcherSupport = commands.targetCommand.hasTargetWatcherSupport();
-  //  (Like other method of this module)
-  const hasWatcherSupport = commands.targetCommand.hasTargetWatcherSupport(
-    "blackboxing"
-  );
+  const hasWatcherSupport = commands.targetCommand.hasTargetWatcherSupport();
   if (hasWatcherSupport) {
     const blackboxingFront = await commands.targetCommand.watcherFront.getBlackboxingActor();
     if (shouldBlackBox) {
@@ -398,8 +389,8 @@ async function addThread(targetFront) {
   return createThread(threadActorID, targetFront);
 }
 
-function removeThread(thread) {
-  delete targets[thread.actor];
+function removeThread(threadActorID) {
+  delete targets[threadActorID];
 }
 
 function getMainThread() {

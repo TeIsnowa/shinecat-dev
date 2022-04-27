@@ -23,6 +23,10 @@ XPCOMUtils.defineLazyModuleGetters(this, {
 
 const TELEMETRY_1ST_RESULT = "PLACES_AUTOCOMPLETE_1ST_RESULT_TIME_MS";
 const TELEMETRY_6_FIRST_RESULTS = "PLACES_AUTOCOMPLETE_6_FIRST_RESULTS_TIME_MS";
+
+const TELEMETRY_SCALAR_ENGAGEMENT = "urlbar.engagement";
+const TELEMETRY_SCALAR_ABANDONMENT = "urlbar.abandonment";
+
 const NOTIFICATIONS = {
   QUERY_STARTED: "onQueryStarted",
   QUERY_RESULTS: "onQueryResults",
@@ -539,6 +543,10 @@ class UrlbarController {
     //   newly added telemetryType.
     // * Add a test named browser_UsageTelemetry_urlbar_newType.js to
     //   browser/modules/test/browser.
+    // * Add the telemetryType to UrlbarUtils.SELECTED_RESULT_TYPES, which is
+    //   used by the histograms below. These histograms are deprecated, but the
+    //   code below logs an error if telemetryType is not in
+    //   SELECTED_RESULT_TYPES.
     //
     // The "topsite" type overrides the other ones, because it starts from a
     // unique user interaction, that we want to count apart. We do this here
@@ -582,7 +590,7 @@ class UrlbarController {
    * Handles deletion of results from the last query context and the view. There
    * are two kinds of results that can be deleted:
    *
-   * - Results for which `provider.blockResult(result)` returns true
+   * - Results for which `provider.blockResult()` returns true
    * - Results whose source is `HISTORY` are handled specially by this method
    *   and can always be removed
    *
@@ -600,6 +608,7 @@ class UrlbarController {
       Cu.reportError("Cannot delete - the latest query is not present");
       return false;
     }
+    let { queryContext } = this._lastQueryContextWrapper;
 
     if (!result) {
       // No result specified, so use the currently selected result.
@@ -616,12 +625,16 @@ class UrlbarController {
       return false;
     }
 
-    // First call `provider.blockResult(result)`.
+    // First call `provider.blockResult()`.
     let provider = UrlbarProvidersManager.getProvider(result.providerName);
     if (!provider) {
       Cu.reportError(`Provider not found: ${result.providerName}`);
     }
-    let blockedByProvider = provider?.tryMethod("blockResult", result);
+    let blockedByProvider = provider?.tryMethod(
+      "blockResult",
+      queryContext,
+      result
+    );
 
     // If the provider didn't block the result, then continue only if the result
     // is from history.
@@ -632,7 +645,6 @@ class UrlbarController {
       return false;
     }
 
-    let { queryContext } = this._lastQueryContextWrapper;
     let index = queryContext.results.indexOf(result);
     if (index < 0) {
       Cu.reportError("Failed to find the selected result in the results");
@@ -862,7 +874,7 @@ class TelemetryEvent {
     } else if (event.type == "blur") {
       action = "blur";
     } else {
-      action = event instanceof MouseEvent ? "click" : "enter";
+      action = MouseEvent.isInstance(event) ? "click" : "enter";
     }
     let method = action == "blur" ? "abandonment" : "engagement";
     let value = this._startEventInfo.interactionType;
@@ -903,6 +915,13 @@ class TelemetryEvent {
       extra
     );
 
+    Services.telemetry.scalarAdd(
+      method == "engagement"
+        ? TELEMETRY_SCALAR_ENGAGEMENT
+        : TELEMETRY_SCALAR_ABANDONMENT,
+      1
+    );
+
     let { queryContext } = this._controller._lastQueryContextWrapper || {};
     this._controller.manager.notifyEngagementChange(
       this._isPrivate,
@@ -940,6 +959,9 @@ class TelemetryEvent {
         return row.result.type == UrlbarUtils.RESULT_TYPE.TIP
           ? "tiphelp"
           : "help";
+      }
+      if (element.classList.contains("urlbarView-button-block")) {
+        return "block";
       }
     }
     // Now handle the result.

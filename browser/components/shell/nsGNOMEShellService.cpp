@@ -22,6 +22,7 @@
 #include "nsIImageLoadingContent.h"
 #include "imgIRequest.h"
 #include "imgIContainer.h"
+#include "mozilla/GRefPtr.h"
 #include "mozilla/Sprintf.h"
 #include "mozilla/WidgetUtils.h"
 #include "mozilla/WidgetUtilsGtk.h"
@@ -189,7 +190,7 @@ nsGNOMEShellService::IsDefaultBrowser(bool aForAllTypes,
 
   if (widget::IsRunningUnderSnap()) {
     const gchar* argv[] = {"xdg-settings", "check", "default-web-browser",
-                           (SNAP_INSTANCE_NAME ".desktop"), nullptr};
+                           (MOZ_APP_NAME ".desktop"), nullptr};
     GSpawnFlags flags = static_cast<GSpawnFlags>(G_SPAWN_SEARCH_PATH |
                                                  G_SPAWN_STDERR_TO_DEV_NULL);
     gchar* output = nullptr;
@@ -269,7 +270,7 @@ nsGNOMEShellService::SetDefaultBrowser(bool aClaimAllTypes, bool aForAllUsers) {
 
   if (widget::IsRunningUnderSnap()) {
     const gchar* argv[] = {"xdg-settings", "set", "default-web-browser",
-                           (SNAP_INSTANCE_NAME ".desktop"), nullptr};
+                           (MOZ_APP_NAME ".desktop"), nullptr};
     GSpawnFlags flags = static_cast<GSpawnFlags>(G_SPAWN_SEARCH_PATH |
                                                  G_SPAWN_STDOUT_TO_DEV_NULL |
                                                  G_SPAWN_STDERR_TO_DEV_NULL);
@@ -357,14 +358,12 @@ nsGNOMEShellService::GetCanSetDesktopBackground(bool* aResult) {
 }
 
 static nsresult WriteImage(const nsCString& aPath, imgIContainer* aImage) {
-  GdkPixbuf* pixbuf = nsImageToPixbuf::ImageToPixbuf(aImage);
+  RefPtr<GdkPixbuf> pixbuf = nsImageToPixbuf::ImageToPixbuf(aImage);
   if (!pixbuf) {
     return NS_ERROR_NOT_AVAILABLE;
   }
 
   gboolean res = gdk_pixbuf_save(pixbuf, aPath.get(), "png", nullptr, nullptr);
-
-  g_object_unref(pixbuf);
   return res ? NS_OK : NS_ERROR_FAILURE;
 }
 

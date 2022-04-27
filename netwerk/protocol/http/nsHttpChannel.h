@@ -452,8 +452,7 @@ class nsHttpChannel final : public HttpBaseChannel,
    * Some basic consistency checks have been applied to the channel. Called
    * from ProcessSecurityHeaders.
    */
-  [[nodiscard]] nsresult ProcessHSTSHeader(nsITransportSecurityInfo* aSecInfo,
-                                           uint32_t aFlags);
+  [[nodiscard]] nsresult ProcessHSTSHeader(nsITransportSecurityInfo* aSecInfo);
 
   void InvalidateCacheEntryForLocation(const char* location);
   void AssembleCacheKey(const char* spec, uint32_t postID, nsACString& key);
@@ -797,7 +796,7 @@ class nsHttpChannel final : public HttpBaseChannel,
   bool mIgnoreCacheEntry{false};
   // Lock preventing SetupTransaction/MaybeCreateCacheEntryWhenRCWN and
   // OnCacheEntryCheck being called at the same time.
-  mozilla::Mutex mRCWNLock{"nsHttpChannel.mRCWNLock"};
+  mozilla::Mutex mRCWNLock MOZ_UNANNOTATED{"nsHttpChannel.mRCWNLock"};
 
   TimeStamp mNavigationStartTimeStamp;
 

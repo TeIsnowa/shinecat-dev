@@ -68,7 +68,6 @@ const JSClassOps DebuggerScript::classOps_ = {
     nullptr,                          // mayResolve
     nullptr,                          // finalize
     nullptr,                          // call
-    nullptr,                          // hasInstance
     nullptr,                          // construct
     CallTraceMethod<DebuggerScript>,  // trace
 };
@@ -489,8 +488,8 @@ bool DebuggerScript::CallData::getGlobal() {
 
 bool DebuggerScript::CallData::getFormat() {
   args.rval().setString(referent.get().match(
-      [=](BaseScript*&) { return cx->names().js.get(); },
-      [=](WasmInstanceObject*&) { return cx->names().wasm.get(); }));
+      [this](BaseScript*&) { return cx->names().js.get(); },
+      [this](WasmInstanceObject*&) { return cx->names().wasm.get(); }));
   return true;
 }
 
@@ -1485,8 +1484,6 @@ static bool BytecodeIsEffectful(JSOp op) {
     case JSOp::InitHiddenElemGetter:
     case JSOp::InitElemSetter:
     case JSOp::InitHiddenElemSetter:
-    case JSOp::FunCall:
-    case JSOp::FunApply:
     case JSOp::SpreadCall:
     case JSOp::Call:
     case JSOp::CallIgnoresRv:
@@ -1534,7 +1531,6 @@ static bool BytecodeIsEffectful(JSOp op) {
     case JSOp::ToAsyncIter:
     case JSOp::ToPropertyKey:
     case JSOp::Lambda:
-    case JSOp::LambdaArrow:
     case JSOp::PushLexicalEnv:
     case JSOp::PopLexicalEnv:
     case JSOp::FreshenLexicalEnv:
@@ -1544,6 +1540,7 @@ static bool BytecodeIsEffectful(JSOp op) {
     case JSOp::MoreIter:
     case JSOp::IsNoIter:
     case JSOp::EndIter:
+    case JSOp::IsNullOrUndefined:
     case JSOp::In:
     case JSOp::HasOwn:
     case JSOp::CheckPrivateField:
@@ -1591,7 +1588,6 @@ static bool BytecodeIsEffectful(JSOp op) {
     case JSOp::AsyncResolve:
     case JSOp::Finally:
     case JSOp::GetRval:
-    case JSOp::Gosub:
     case JSOp::Retsub:
     case JSOp::ThrowMsg:
     case JSOp::ForceInterpreter:
@@ -1985,7 +1981,7 @@ struct DebuggerScript::SetBreakpointMatcher {
     }
 
     if (!cx_->zone()->new_<Breakpoint>(dbg_, debuggerObject_, site, handler_)) {
-      site->destroyIfEmpty(cx_->runtime()->defaultFreeOp());
+      site->destroyIfEmpty(cx_->runtime()->gcContext());
       return false;
     }
     AddCellMemory(script, sizeof(Breakpoint), MemoryUse::Breakpoint);
@@ -2014,7 +2010,7 @@ struct DebuggerScript::SetBreakpointMatcher {
     }
 
     if (!cx_->zone()->new_<Breakpoint>(dbg_, debuggerObject_, site, handler_)) {
-      site->destroyIfEmpty(cx_->runtime()->defaultFreeOp());
+      site->destroyIfEmpty(cx_->runtime()->gcContext());
       return false;
     }
     AddCellMemory(wasmInstance, sizeof(Breakpoint), MemoryUse::Breakpoint);
@@ -2119,8 +2115,8 @@ class DebuggerScript::ClearBreakpointMatcher {
       return false;
     }
 
-    DebugScript::clearBreakpointsIn(cx_->runtime()->defaultFreeOp(), script,
-                                    dbg_, handler_);
+    DebugScript::clearBreakpointsIn(cx_->runtime()->gcContext(), script, dbg_,
+                                    handler_);
     return true;
   }
   ReturnType match(Handle<WasmInstanceObject*> instanceObj) {
@@ -2139,7 +2135,7 @@ class DebuggerScript::ClearBreakpointMatcher {
       return false;
     }
 
-    instance.debug().clearBreakpointsIn(cx_->runtime()->defaultFreeOp(),
+    instance.debug().clearBreakpointsIn(cx_->runtime()->gcContext(),
                                         instanceObj, dbg_, handler_);
     return true;
   }

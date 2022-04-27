@@ -12,7 +12,7 @@
 #  include <unistd.h>
 #endif
 
-#include "GeckoProfiler.h"
+#include "ProfilerControl.h"
 #include "mozilla/ClearOnShutdown.h"
 #include "mozilla/CmdLineAndEnvUtils.h"
 #include "mozilla/PoisonIOInterposer.h"
@@ -240,17 +240,6 @@ void AppShutdown::MaybeFastShutdown(ShutdownPhase aPhase) {
     MaybeDoRestart();
 
     profiler_shutdown(IsFastShutdown::Yes);
-
-#ifdef MOZ_BACKGROUNDTASKS
-    // We must unlock the profile, or else the lock file `parent.lock` will
-    // prevent removing the directory, allowing additional writes (including
-    // `ShutdownDuration.json{.tmp}`) to succeed.  But `UnlockProfile()` is not
-    // idempotent so we can't push the unlock into `Shutdown()` directly.
-    if (mozilla::BackgroundTasks::IsUsingTemporaryProfile()) {
-      UnlockProfile();
-    }
-    mozilla::BackgroundTasks::Shutdown();
-#endif
 
     DoImmediateExit(sExitCode);
   } else if (aPhase == sLateWriteChecksPhase) {

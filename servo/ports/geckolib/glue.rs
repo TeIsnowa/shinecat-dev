@@ -91,7 +91,7 @@ use style::gecko_bindings::structs::{
     RawServoLayerStatementRule, RawServoMediaList, RawServoMediaRule, RawServoMozDocumentRule,
     RawServoNamespaceRule, RawServoPageRule, RawServoScrollTimelineRule,
     RawServoSharedMemoryBuilder, RawServoStyleSet, RawServoStyleSheetContents,
-    RawServoSupportsRule, ServoCssRules,
+    RawServoSupportsRule, RawServoContainerRule, ServoCssRules,
 };
 use style::gecko_bindings::sugar::ownership::{FFIArcHelpers, HasArcFFI, HasFFI};
 use style::gecko_bindings::sugar::ownership::{
@@ -127,7 +127,7 @@ use style::stylesheets::{
     DocumentRule, FontFaceRule, FontFeatureValuesRule, ImportRule, KeyframesRule, LayerBlockRule,
     LayerStatementRule, MediaRule, NamespaceRule, Origin, OriginSet, PageRule, SanitizationData,
     SanitizationKind, ScrollTimelineRule, StyleRule, StylesheetContents,
-    StylesheetLoader as StyleStylesheetLoader, SupportsRule, UrlExtraData,
+    StylesheetLoader as StyleStylesheetLoader, SupportsRule, UrlExtraData, ContainerRule,
 };
 use style::stylist::{add_size_of_ua_cache, AuthorStylesEnabled, RuleInclusion, Stylist};
 use style::thread_state;
@@ -146,14 +146,18 @@ use style_traits::{CssWriter, ParsingMode, StyleParseErrorKind, ToCss};
 use to_shmem::SharedMemoryBuilder;
 
 trait ClosureHelper {
-    fn invoke(&self);
+    fn invoke(&self, property_id: Option<NonCustomPropertyId>);
 }
 
 impl ClosureHelper for DeclarationBlockMutationClosure {
     #[inline]
-    fn invoke(&self) {
+    fn invoke(&self, property_id: Option<NonCustomPropertyId>) {
         if let Some(function) = self.function.as_ref() {
-            unsafe { function(self.data) };
+            let gecko_prop_id = match property_id {
+                Some(p) => p.to_nscsspropertyid(),
+                None => nsCSSPropertyID::eCSSPropertyExtra_variable,
+            };
+            unsafe { function(self.data, gecko_prop_id) }
         }
     }
 }
@@ -1813,8 +1817,6 @@ pub unsafe extern "C" fn Servo_StyleSet_MediumFeaturesChanged(
     document_set: &RawServoStyleSet,
     non_document_styles: &mut nsTArray<&mut RawServoAuthorStyles>,
     may_affect_default_style: bool,
-    viewport_changed: bool,
-    root: Option<&RawGeckoElement>,
 ) -> structs::MediumFeaturesChangedResult {
     let global_style_data = &*GLOBAL_STYLE_DATA;
     let guard = global_style_data.shared_lock.read();
@@ -1858,16 +1860,6 @@ pub unsafe extern "C" fn Servo_StyleSet_MediumFeaturesChanged(
         if affected_style {
             affects_non_document_rules = true;
             author_styles.stylesheets.force_dirty();
-        }
-    }
-
-    if viewport_changed && document_data.stylist.device().used_viewport_size() {
-        if let Some(root) = root {
-            if style::invalidation::viewport_units::invalidate(GeckoElement(root)) {
-                // The invalidation machinery propagates the bits up, but we still need
-                // to tell the Gecko restyle root machinery about it.
-                bindings::Gecko_NoteDirtySubtreeForInvalidation(root);
-            }
         }
     }
 
@@ -2330,6 +2322,14 @@ impl_group_rule_funcs! { (Supports, SupportsRule, RawServoSupportsRule),
     changed: Servo_StyleSet_SupportsRuleChanged,
 }
 
+impl_group_rule_funcs! { (Container, ContainerRule, RawServoContainerRule),
+    get_rules: Servo_ContainerRule_GetRules,
+    getter: Servo_CssRules_GetContainerRuleAt,
+    debug: Servo_ContainerRule_Debug,
+    to_css: Servo_ContainerRule_GetCssText,
+    changed: Servo_StyleSet_ContainerRuleChanged,
+}
+
 impl_group_rule_funcs! { (LayerBlock, LayerBlockRule, RawServoLayerBlockRule),
     get_rules: Servo_LayerBlockRule_GetRules,
     getter: Servo_CssRules_GetLayerBlockRuleAt,
@@ -2711,7 +2711,7 @@ pub unsafe extern "C" fn Servo_KeyframesRule_SetName(
     name: *mut nsAtom,
 ) {
     write_locked_arc(rule, |rule: &mut KeyframesRule| {
-        rule.name = KeyframesName::Ident(CustomIdent(Atom::from_addrefed(name)));
+        rule.name = KeyframesName::from_atom(Atom::from_addrefed(name));
     })
 }
 
@@ -2943,6 +2943,16 @@ pub extern "C" fn Servo_SupportsRule_GetConditionText(
     result: &mut nsACString,
 ) {
     read_locked_arc(rule, |rule: &SupportsRule| {
+        rule.condition.to_css(&mut CssWriter::new(result)).unwrap();
+    })
+}
+
+#[no_mangle]
+pub extern "C" fn Servo_ContainerRule_GetConditionText(
+    rule: &RawServoContainerRule,
+    result: &mut nsACString,
+) {
+    read_locked_arc(rule, |rule: &ContainerRule| {
         rule.condition.to_css(&mut CssWriter::new(result)).unwrap();
     })
 }
@@ -4115,8 +4125,8 @@ pub unsafe extern "C" fn Servo_ComputedValues_Inherit(
 pub extern "C" fn Servo_ComputedValues_SpecifiesAnimationsOrTransitions(
     values: &ComputedValues,
 ) -> bool {
-    let b = values.get_box();
-    b.specifies_animations() || b.specifies_transitions()
+    let ui = values.get_ui();
+    ui.specifies_animations() || ui.specifies_transitions()
 }
 
 #[no_mangle]
@@ -4657,6 +4667,7 @@ pub unsafe extern "C" fn Servo_DeclarationBlock_GetPropertyIsImportant(
 
 #[inline(always)]
 fn set_property_to_declarations(
+    non_custom_property_id: Option<NonCustomPropertyId>,
     block: &RawServoDeclarationBlock,
     parsed_declarations: &mut SourcePropertyDeclaration,
     before_change_closure: DeclarationBlockMutationClosure,
@@ -4670,7 +4681,7 @@ fn set_property_to_declarations(
         return false;
     }
 
-    before_change_closure.invoke();
+    before_change_closure.invoke(non_custom_property_id);
     write_locked_arc(block, |decls: &mut PropertyDeclarationBlock| {
         decls.update(parsed_declarations.drain(), importance, &mut updates)
     });
@@ -4691,6 +4702,7 @@ fn set_property(
 ) -> bool {
     let mut source_declarations = SourcePropertyDeclaration::new();
     let reporter = ErrorReporter::new(ptr::null_mut(), loader, data.ptr());
+    let non_custom_property_id = property_id.non_custom_id();
     let result = parse_property_into(
         &mut source_declarations,
         property_id,
@@ -4714,6 +4726,7 @@ fn set_property(
     };
 
     set_property_to_declarations(
+        non_custom_property_id,
         declarations,
         &mut source_declarations,
         before_change_closure,
@@ -4754,10 +4767,13 @@ pub unsafe extern "C" fn Servo_DeclarationBlock_SetPropertyToAnimationValue(
     animation_value: &RawServoAnimationValue,
     before_change_closure: DeclarationBlockMutationClosure,
 ) -> bool {
+    let animation_value = AnimationValue::as_arc(&animation_value);
+    let non_custom_property_id = animation_value.id().into();
     let mut source_declarations =
-        SourcePropertyDeclaration::with_one(AnimationValue::as_arc(&animation_value).uncompute());
+        SourcePropertyDeclaration::with_one(animation_value.uncompute());
 
     set_property_to_declarations(
+        Some(non_custom_property_id),
         declarations,
         &mut source_declarations,
         before_change_closure,
@@ -4806,7 +4822,7 @@ fn remove_property(
         None => return false,
     };
 
-    before_change_closure.invoke();
+    before_change_closure.invoke(property_id.non_custom_id());
     write_locked_arc(declarations, |decls: &mut PropertyDeclarationBlock| {
         decls.remove_property(&property_id, first_declaration)
     });
@@ -5893,7 +5909,12 @@ pub extern "C" fn Servo_GetComputedKeyframeValues(
     let metrics = get_metrics_provider_for_product();
 
     let element = GeckoElement(element);
-    let parent_element = element.inheritance_parent();
+    let pseudo = PseudoElement::from_pseudo_type(pseudo_type);
+    let parent_element = if pseudo.is_none() {
+        element.inheritance_parent()
+    } else {
+        Some(element)
+    };
     let parent_data = parent_element.as_ref().and_then(|e| e.borrow_data());
     let parent_style = parent_data
         .as_ref()
@@ -5910,7 +5931,6 @@ pub extern "C" fn Servo_GetComputedKeyframeValues(
         &mut conditions,
     );
 
-    let pseudo = PseudoElement::from_pseudo_type(pseudo_type);
     let restriction = pseudo.and_then(|p| p.property_restriction());
 
     let global_style_data = &*GLOBAL_STYLE_DATA;
@@ -7355,4 +7375,28 @@ pub extern "C" fn Servo_LayerStatementRule_GetNameAt(
             name.to_css(&mut CssWriter::new(result)).unwrap()
         }
     })
+}
+
+#[no_mangle]
+pub unsafe extern "C" fn Servo_InvalidateForViewportUnits(
+    document_style: &RawServoStyleSet,
+    root: &RawGeckoElement,
+    dynamic_only: bool,
+) {
+    let document_data = PerDocumentStyleData::from_ffi(document_style).borrow();
+    let device = document_data.stylist.device();
+
+    if !device.used_viewport_size() {
+        return;
+    }
+
+    if dynamic_only && !device.used_dynamic_viewport_size() {
+        return;
+    }
+
+    if style::invalidation::viewport_units::invalidate(GeckoElement(root)) {
+        // The invalidation machinery propagates the bits up, but we still need
+        // to tell the Gecko restyle root machinery about it.
+        bindings::Gecko_NoteDirtySubtreeForInvalidation(root);
+    }
 }

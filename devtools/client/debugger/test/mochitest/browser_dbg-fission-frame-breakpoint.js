@@ -2,6 +2,8 @@
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at <http://mozilla.org/MPL/2.0/>. */
 
+"use strict";
+
 const TEST_COM_URI = `${URL_ROOT_COM_SSL}examples/doc_dbg-fission-frame-sources.html`;
 
 add_task(async function() {
@@ -30,17 +32,16 @@ add_task(async function() {
     getSelectedSource().url.includes("simple2.js"),
     "Selected source is simple2.js"
   );
-  assertPausedLocation(dbg);
-  assertDebugLine(dbg, 7);
+  await waitForPaused(dbg);
+  assertPausedAtSourceAndLine(dbg, findSource(dbg, "simple2.js").id, 7);
 
   await stepIn(dbg);
-  assertDebugLine(dbg, 7);
-  assertPausedLocation(dbg);
+  assertPausedAtSourceAndLine(dbg, findSource(dbg, "simple2.js").id, 7);
 
   // We can't used `stepIn` helper as this last step will resume
   // and the helper is expecting to pause again
   await dbg.actions.stepIn(getThreadContext(dbg));
-  ok(!isPaused(dbg), "Stepping in two times resumes");
+  assertNotPaused(dbg, "Stepping in two times resumes");
 
   await dbg.toolbox.closeToolbox();
 });

@@ -2,6 +2,8 @@
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at <http://mozilla.org/MPL/2.0/>. */
 
+"use strict";
+
 requestLongerTimeout(2);
 
 // Tests that using the Settings menu to enable and disable JavaScript
@@ -23,7 +25,7 @@ add_task(async function() {
   });
 
   info("Waiting for reload triggered by disabling javascript");
-  await waitForSourceCount(dbg, 0);
+  await waitForSourcesInSourceTree(dbg, [], { noExpand: true });
 
   info("Wait for DevTools to be reloaded");
   await waitForDevToolsReload();

@@ -95,9 +95,12 @@ using mozilla::a11y::IHandlerControlHolder from "mozilla/a11y/IPCTypes.h";
 using mozilla::dom::NativeThreadId from "mozilla/dom/NativeThreadId.h";
 using mozilla::hal::ProcessPriority from "mozilla/HalTypes.h";
 using mozilla::gfx::IntSize from "mozilla/gfx/2D.h";
+using mozilla::gfx::SurfaceFormat from "mozilla/gfx/Types.h";
 using mozilla::dom::TabId from "mozilla/dom/ipc/IdType.h";
 using mozilla::dom::ContentParentId from "mozilla/dom/ipc/IdType.h";
 using mozilla::LayoutDeviceIntPoint from "Units.h";
+using mozilla::ImagePoint from "Units.h";
+using mozilla::ImageIntSize from "Units.h";
 using mozilla::widget::ThemeChangeKind from "mozilla/widget/WidgetMessageUtils.h";
 using class mozilla::dom::MessagePort from "mozilla/dom/MessagePort.h";
 using class mozilla::dom::ipc::StructuredCloneData from "mozilla/dom/ipc/StructuredCloneData.h";
@@ -425,6 +428,28 @@ union BlobURLDataRequestResult
   nsresult;
 };
 
+struct TextRecognitionQuad {
+    float confidence;
+    nsString string;
+    ImagePoint[] points;
+};
+
+struct TextRecognitionResult {
+    TextRecognitionQuad[] quads;
+};
+
+union TextRecognitionResultOrError {
+    TextRecognitionResult;
+    nsCString;
+};
+
+struct ShmemImage {
+    Shmem data;
+    uint32_t stride;
+    SurfaceFormat format;
+    ImageIntSize size;
+};
+
 /**
  * The PContent protocol is a top-level protocol between the UI process
  * and a content process. There is exactly one PContentParent/PContentChild pair
@@ -580,6 +605,13 @@ child:
      * to pull data from content processes.
      */
     async GetUntrustedModulesData() returns (UntrustedModulesData? data);
+
+    /**
+    * This method is used to notifty a child process to start
+    * processing module loading events in UntrustedModulesProcessor.
+    * This should be called when the parent process has gone idle.
+    */
+    async UnblockUntrustedModulesThread();
 #endif  // defined(XP_WIN)
 
     /**
@@ -750,7 +782,8 @@ child:
                                     SystemFontList systemFontList,
                                     SharedMemoryHandle? sharedUASheetHandle,
                                     uintptr_t sharedUASheetAddress,
-                                    SharedMemoryHandle[] sharedFontListBlocks);
+                                    SharedMemoryHandle[] sharedFontListBlocks,
+                                    bool aIsStartingUp);
 
     // Notify child that last-pb-context-exited notification was observed
     async LastPrivateDocShellDestroyed();
@@ -994,9 +1027,6 @@ child:
   // Update the cached list of codec supported in the given process.
   async UpdateMediaCodecsSupported(RemoteDecodeIn aLocation, MediaCodecsSupported aSupported);
 
-  async FlushTabState(MaybeDiscardedBrowsingContext aBrowsingContext)
-      returns(bool aHadContext);
-
   // Send the list of the supported mimetypes in the given process. GeckoView-specific
   async DecoderSupportedMimeTypes(nsCString[] supportedTypes);
 
@@ -1043,8 +1073,7 @@ parent:
 
     async InitCrashReporter(NativeThreadId tid);
 
-    sync IsSecureURI(nsIURI aURI, uint32_t aFlags,
-                     OriginAttributes aOriginAttributes)
+    sync IsSecureURI(nsIURI aURI, OriginAttributes aOriginAttributes)
         returns (bool isSecureURI);
 
     async AccumulateMixedContentHSTS(nsIURI aURI, bool aActive,
@@ -1092,7 +1121,8 @@ parent:
                           nsIPrincipal triggeringPrincipal,
                           nsIPrincipal redirectPrincipal,
                           MaybeDiscardedBrowsingContext browsingContext,
-                          bool wasExternallyTriggered);
+                          bool wasExternallyTriggered,
+                          bool hasValidUserGestureActivation);
     async ExtProtocolChannelConnectParent(uint64_t registrarId);
 
     // PrefService message
@@ -1185,6 +1215,10 @@ parent:
     // Returns a list of formats supported by the clipboard
     sync GetExternalClipboardFormats(int32_t aWhichClipboard, bool aPlainTextOnly) returns (nsCString[] aTypes);
 
+    // Given a list of supported types, returns the clipboard data for the
+    // first type that matches.
+    async GetClipboardAsync(nsCString[] aTypes, int32_t aWhichClipboard) returns (IPCDataTransfer dataTransfer);
+
     // Clears the clipboard.
     async EmptyClipboard(int32_t aWhichClipboard);
 
@@ -1207,6 +1241,8 @@ parent:
     async DeviceReset();
 
     async CopyFavicon(nsIURI oldURI, nsIURI newURI, bool isPrivate);
+
+    async FindImageText(ShmemImage image) returns (TextRecognitionResultOrError result);
 
     /**
      * Notifies the parent about a recording device is starting or shutdown.

@@ -4,13 +4,19 @@
 
 "use strict";
 
-const EXPORTED_SYMBOLS = ["waitForInitialNavigationCompleted"];
+const EXPORTED_SYMBOLS = [
+  "ProgressListener",
+  "waitForInitialNavigationCompleted",
+];
 
 const { XPCOMUtils } = ChromeUtils.import(
   "resource://gre/modules/XPCOMUtils.jsm"
 );
 
 XPCOMUtils.defineLazyModuleGetters(this, {
+  clearTimeout: "resource://gre/modules/Timer.jsm",
+  setTimeout: "resource://gre/modules/Timer.jsm",
+
   Log: "chrome://remote/content/shared/Log.jsm",
   truncate: "chrome://remote/content/shared/Format.jsm",
 });
@@ -81,12 +87,13 @@ async function waitForInitialNavigationCompleted(webProgress, options = {}) {
 class ProgressListener {
   #resolveWhenStarted;
   #unloadTimeout;
+  #waitForExplicitStart;
   #webProgress;
 
   #resolve;
   #seenStartFlag;
   #targetURI;
-  #unloadTimer;
+  #unloadTimerId;
 
   /**
    * Create a new WebProgressListener instance.
@@ -100,18 +107,28 @@ class ProgressListener {
    *     finished loading. Defaults to `false`.
    * @param {Number=} options.unloadTimeout
    *     Time to allow before the page gets unloaded. Defaults to 200ms.
+   * @param {Boolean=} options.waitForExplicitStart
+   *     Flag to indicate that the Promise can only resolve after receiving a
+   *     STATE_START state change. In other words, if the webProgress is already
+   *     navigating, the Promise will only resolve for the next navigation.
+   *     Defaults to `false`.
    */
   constructor(webProgress, options = {}) {
-    const { resolveWhenStarted = false, unloadTimeout = 200 } = options;
+    const {
+      resolveWhenStarted = false,
+      unloadTimeout = 200,
+      waitForExplicitStart = false,
+    } = options;
 
     this.#resolveWhenStarted = resolveWhenStarted;
     this.#unloadTimeout = unloadTimeout;
+    this.#waitForExplicitStart = waitForExplicitStart;
     this.#webProgress = webProgress;
 
     this.#resolve = null;
     this.#seenStartFlag = false;
     this.#targetURI = null;
-    this.#unloadTimer = null;
+    this.#unloadTimerId = null;
   }
 
   get browsingContext() {
@@ -122,16 +139,21 @@ class ProgressListener {
     return this.#webProgress.browsingContext.currentURI;
   }
 
-  get targetURI() {
-    return this.#targetURI;
-  }
-
   get isLoadingDocument() {
     return this.#webProgress.isLoadingDocument;
   }
 
+  get isStarted() {
+    return this.#resolve !== null;
+  }
+
+  get targetURI() {
+    return this.#targetURI;
+  }
+
   #checkLoadingState(request, options = {}) {
     const { isStart = false, isStop = false } = options;
+    const messagePrefix = `[${this.browsingContext.id}] ${this.constructor.name}`;
 
     if (isStart && !this.#seenStartFlag) {
       this.#seenStartFlag = true;
@@ -139,12 +161,12 @@ class ProgressListener {
       this.#targetURI = this.#getTargetURI(request);
 
       logger.trace(
-        truncate`[${this.browsingContext.id}] ${this.constructor.name} state=start: ${this.targetURI?.spec}`
+        truncate`${messagePrefix} state=start: ${this.targetURI?.spec}`
       );
 
-      if (this.#unloadTimer) {
-        this.#unloadTimer.cancel();
-        this.#unloadTimer = null;
+      if (this.#unloadTimerId !== null) {
+        clearTimeout(this.#unloadTimerId);
+        this.#unloadTimerId = null;
       }
 
       if (this.#resolveWhenStarted) {
@@ -156,10 +178,21 @@ class ProgressListener {
 
     if (isStop && this.#seenStartFlag) {
       logger.trace(
-        truncate`[${this.browsingContext.id}] ${this.constructor.name} state=stop: ${this.currentURI.spec}`
+        truncate`${messagePrefix} state=stop: ${this.currentURI.spec}`
       );
 
-      this.stop();
+      // If a non initial page finished loading the navigation is done.
+      if (!this.browsingContext.currentWindowGlobal.isInitialDocument) {
+        this.stop();
+        return;
+      }
+
+      // Otherwise wait for a potential additional page load.
+      logger.trace(
+        `${messagePrefix} Initial document loaded. Wait for a potential further navigation.`
+      );
+      this.#seenStartFlag = false;
+      this.#setUnloadTimer();
     }
   }
 
@@ -169,6 +202,17 @@ class ProgressListener {
     } catch (e) {}
 
     return null;
+  }
+
+  #setUnloadTimer() {
+    this.#unloadTimerId = setTimeout(() => {
+      logger.trace(
+        truncate`[${this.browsingContext.id}] No navigation detected: ${this.currentURI?.spec}`
+      );
+      // Assume the target is the currently loaded URI.
+      this.#targetURI = this.currentURI;
+      this.stop();
+    }, this.#unloadTimeout);
   }
 
   onStateChange(progress, request, flag, status) {
@@ -210,28 +254,14 @@ class ProgressListener {
 
     webProgressListeners.add(this);
 
-    if (this.#webProgress.isLoadingDocument) {
+    if (this.#webProgress.isLoadingDocument && !this.#waitForExplicitStart) {
       this.#checkLoadingState(this.#webProgress.documentRequest, {
         isStart: true,
       });
     } else {
       // If the document is not loading yet wait some time for the navigation
       // to be started.
-      this.#unloadTimer = Cc["@mozilla.org/timer;1"].createInstance(
-        Ci.nsITimer
-      );
-      this.#unloadTimer.initWithCallback(
-        () => {
-          logger.trace(
-            truncate`[${this.browsingContext.id}] No navigation detected: ${this.currentURI?.spec}`
-          );
-          // Assume the target is the currently loaded URI.
-          this.#targetURI = this.currentURI;
-          this.stop();
-        },
-        this.#unloadTimeout,
-        Ci.nsITimer.TYPE_ONE_SHOT
-      );
+      this.#setUnloadTimer();
     }
 
     return promise;
@@ -245,8 +275,8 @@ class ProgressListener {
       throw new Error(`Progress listener not yet started`);
     }
 
-    this.#unloadTimer?.cancel();
-    this.#unloadTimer = null;
+    clearTimeout(this.#unloadTimerId);
+    this.#unloadTimerId = null;
 
     this.#webProgress.removeProgressListener(
       this,

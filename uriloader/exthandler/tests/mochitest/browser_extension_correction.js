@@ -10,7 +10,7 @@ const TEST_PATH = getRootDirectory(gTestPath).replace(
 
 let gPathsToRemove = [];
 
-add_task(async function setup() {
+add_setup(async function() {
   await SpecialPowers.pushPrefEnv({
     set: [["browser.download.useDownloadDir", true]],
   });
@@ -44,8 +44,8 @@ async function checkDownloadWithExtensionState(
   task,
   { type, shouldHaveExtension, expectedName = null }
 ) {
-  const shouldExpectDialog = !Services.prefs.getBoolPref(
-    "browser.download.improvements_to_download_panel",
+  const shouldExpectDialog = Services.prefs.getBoolPref(
+    "browser.download.always_ask_before_handling_new_types",
     false
   );
 

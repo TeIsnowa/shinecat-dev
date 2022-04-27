@@ -127,10 +127,6 @@ AllocatableGeneralRegisterSet BaselineICAvailableGeneralRegs(size_t numInputs) {
 #endif
   regs.take(BaselineFrameReg);
   regs.take(ICStubReg);
-#ifdef JS_CODEGEN_X64
-  regs.take(ExtractTemp0);
-  regs.take(ExtractTemp1);
-#endif
 
   switch (numInputs) {
     case 0:
@@ -295,8 +291,6 @@ class MOZ_STATIC_CLASS OpToFallbackKindTable {
     setKind(JSOp::Call, BaselineICFallbackKind::Call);
     setKind(JSOp::CallIgnoresRv, BaselineICFallbackKind::Call);
     setKind(JSOp::CallIter, BaselineICFallbackKind::Call);
-    setKind(JSOp::FunCall, BaselineICFallbackKind::Call);
-    setKind(JSOp::FunApply, BaselineICFallbackKind::Call);
     setKind(JSOp::Eval, BaselineICFallbackKind::Call);
     setKind(JSOp::StrictEval, BaselineICFallbackKind::Call);
 
@@ -834,12 +828,6 @@ bool DoSetElemFallback(JSContext* cx, BaselineFrame* frame,
                                       JSOp(*pc) == JSOp::StrictSetElem)) {
       return false;
     }
-  }
-
-  // Don't try to attach stubs that wish to be hidden. We don't know how to
-  // have different enumerability in the stubs for the moment.
-  if (op == JSOp::InitHiddenElem) {
-    return true;
   }
 
   // Overwrite the object on the stack (pushed for the decompiler) with the rhs.
@@ -1390,7 +1378,7 @@ bool DoSetPropFallback(JSContext* cx, BaselineFrame* frame,
 
   if (op == JSOp::InitProp || op == JSOp::InitLockedProp ||
       op == JSOp::InitHiddenProp) {
-    if (!InitPropertyOperation(cx, op, obj, name, rhs)) {
+    if (!InitPropertyOperation(cx, pc, obj, name, rhs)) {
       return false;
     }
   } else if (op == JSOp::SetName || op == JSOp::StrictSetName ||
@@ -1583,8 +1571,7 @@ bool DoCallFallback(JSContext* cx, BaselineFrame* frame, ICFallbackStub* stub,
     }
   } else {
     MOZ_ASSERT(op == JSOp::Call || op == JSOp::CallIgnoresRv ||
-               op == JSOp::CallIter || op == JSOp::FunCall ||
-               op == JSOp::FunApply || op == JSOp::Eval ||
+               op == JSOp::CallIter || op == JSOp::Eval ||
                op == JSOp::StrictEval);
     if (op == JSOp::CallIter && callee.isPrimitive()) {
       MOZ_ASSERT(argc == 0, "thisv must be on top of the stack");
@@ -1926,7 +1913,7 @@ bool DoInstanceOfFallback(JSContext* cx, BaselineFrame* frame,
 
   RootedObject obj(cx, &rhs.toObject());
   bool cond = false;
-  if (!HasInstance(cx, obj, lhs, &cond)) {
+  if (!InstanceofOperator(cx, obj, lhs, &cond)) {
     return false;
   }
 

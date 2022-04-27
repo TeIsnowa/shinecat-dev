@@ -3,6 +3,9 @@
  * file, You can obtain one at <http://mozilla.org/MPL/2.0/>. */
 
 // Tests async stepping will step over await statements
+
+"use strict";
+
 add_task(async function test() {
   await pushPref("devtools.debugger.features.async-stepping", true);
   const dbg = await initDebugger("doc-async.html", "async.js");
@@ -12,10 +15,10 @@ add_task(async function test() {
   invokeInTab("main");
 
   await waitForPaused(dbg);
-  assertPausedLocation(dbg);
-  assertDebugLine(dbg, 8);
+  assertPausedAtSourceAndLine(dbg, findSource(dbg, "async.js").id, 8);
 
   await stepOver(dbg);
-  assertPausedLocation(dbg);
-  assertDebugLine(dbg, 9);
+  assertPausedAtSourceAndLine(dbg, findSource(dbg, "async.js").id, 9);
+
+  await assertBreakpoint(dbg, 8);
 });

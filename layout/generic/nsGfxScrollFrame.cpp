@@ -584,9 +584,9 @@ bool nsHTMLScrollFrame::TryLayout(ScrollReflowInput& aState,
 
   // First, compute our inside-border size and scrollport size
   // XXXldb Can we depend more on ComputeSize here?
-  nsSize kidSize = aState.mReflowInput.mStyleDisplay->IsContainSize()
-                       ? nsSize(0, 0)
-                       : aKidMetrics->PhysicalSize();
+  nsSize kidSize =
+      aState.mReflowInput.mStyleDisplay->GetContainSizeAxes().ContainSize(
+          aKidMetrics->PhysicalSize(), wm);
   const nsSize desiredInsideBorderSize = kidSize + scrollbarGutterSize;
   aState.mInsideBorderSize =
       ComputeInsideBorderSize(aState, desiredInsideBorderSize);
@@ -969,7 +969,8 @@ bool nsHTMLScrollFrame::InInitialReflow() const {
 
 void nsHTMLScrollFrame::ReflowContents(ScrollReflowInput& aState,
                                        const ReflowOutput& aDesiredSize) {
-  ReflowOutput kidDesiredSize(aDesiredSize.GetWritingMode());
+  const WritingMode desiredWm = aDesiredSize.GetWritingMode();
+  ReflowOutput kidDesiredSize(desiredWm);
   ReflowScrolledFrame(aState, GuessHScrollbarNeeded(aState),
                       GuessVScrollbarNeeded(aState), &kidDesiredSize);
 
@@ -996,9 +997,9 @@ void nsHTMLScrollFrame::ReflowContents(ScrollReflowInput& aState,
        aState.mReflowedContentsWithVScrollbar) &&
       aState.mVScrollbar != ShowScrollbar::Always &&
       aState.mHScrollbar != ShowScrollbar::Always) {
-    nsSize kidSize = aState.mReflowInput.mStyleDisplay->IsContainSize()
-                         ? nsSize(0, 0)
-                         : kidDesiredSize.PhysicalSize();
+    nsSize kidSize =
+        aState.mReflowInput.mStyleDisplay->GetContainSizeAxes().ContainSize(
+            kidDesiredSize.PhysicalSize(), desiredWm);
     nsSize insideBorderSize = ComputeInsideBorderSize(aState, kidSize);
     nsRect scrolledRect = mHelper.GetUnsnappedScrolledRectInternal(
         kidDesiredSize.ScrollableOverflow(), insideBorderSize);
@@ -1160,7 +1161,7 @@ static bool IsMarqueeScrollbox(const nsIFrame& aScrollFrame) {
 /* virtual */
 nscoord nsHTMLScrollFrame::GetMinISize(gfxContext* aRenderingContext) {
   nscoord result = [&] {
-    if (StyleDisplay()->IsContainSize()) {
+    if (StyleDisplay()->GetContainSizeAxes().mIContained) {
       return 0;
     }
     if (MOZ_UNLIKELY(IsMarqueeScrollbox(*this))) {
@@ -1176,7 +1177,7 @@ nscoord nsHTMLScrollFrame::GetMinISize(gfxContext* aRenderingContext) {
 /* virtual */
 nscoord nsHTMLScrollFrame::GetPrefISize(gfxContext* aRenderingContext) {
   nscoord result =
-      StyleDisplay()->IsContainSize()
+      StyleDisplay()->GetContainSizeAxes().mIContained
           ? 0
           : mHelper.mScrolledFrame->GetPrefISize(aRenderingContext);
   DISPLAY_PREF_INLINE_SIZE(this, result);
@@ -2446,9 +2447,15 @@ void ScrollFrameHelper::ScrollToCSSPixels(const CSSIntPoint& aScrollPosition,
   // Transmogrify this scroll to a relative one if there's any on-going
   // animation in APZ triggered by __user__.
   // Bug 1740164: We will apply it for cases there's no animation in APZ.
+
+  auto scrollAnimationState = ScrollAnimationState();
+  bool isScrollAnimating =
+      scrollAnimationState.contains(AnimationState::MainThread) ||
+      scrollAnimationState.contains(AnimationState::APZPending) ||
+      scrollAnimationState.contains(AnimationState::APZRequested);
   if (mCurrentAPZScrollAnimationType ==
           APZScrollAnimationType::TriggeredByUserInput &&
-      !IsScrollAnimating(IncludeApzAnimation::No)) {
+      !isScrollAnimating) {
     CSSIntPoint delta = aScrollPosition - currentCSSPixels;
     ScrollByCSSPixels(delta, aMode);
     return;
@@ -2645,7 +2652,10 @@ void ScrollFrameHelper::MarkScrollbarsDirtyForReflow() const {
   }
 }
 
-void ScrollFrameHelper::InvalidateVerticalScrollbar() const {
+void ScrollFrameHelper::InvalidateScrollbars() const {
+  if (mHScrollbarBox) {
+    mHScrollbarBox->InvalidateFrameSubtree();
+  }
   if (mVScrollbarBox) {
     mVScrollbarBox->InvalidateFrameSubtree();
   }
@@ -3229,7 +3239,7 @@ void ScrollFrameHelper::ScrollToImpl(
   // viewport offset, but instead of waiting for  that, just set the value
   // we expect APZ will set ourselves, to minimize the chances of
   // inconsistencies from querying a stale value.
-  if (mIsRoot && nsLayoutUtils::CanScrollOriginClobberApz(mLastScrollOrigin)) {
+  if (mIsRoot && nsLayoutUtils::CanScrollOriginClobberApz(aOrigin)) {
     AutoWeakFrame weakFrame(mOuter);
     AutoScrollbarRepaintSuppression repaintSuppression(this, weakFrame,
                                                        !schedulePaint);
@@ -3679,6 +3689,41 @@ class MOZ_RAII AutoContainsBlendModeCapturer {
   }
 };
 
+// This is an equivalent to the AutoContainsBlendModeCapturer helper class
+// above but for backdrop filters.
+class MOZ_RAII AutoContainsBackdropFilterCapturer {
+  nsDisplayListBuilder& mBuilder;
+  bool mSavedContainsBackdropFilter;
+
+ public:
+  explicit AutoContainsBackdropFilterCapturer(nsDisplayListBuilder& aBuilder)
+      : mBuilder(aBuilder),
+        mSavedContainsBackdropFilter(aBuilder.ContainsBackdropFilter()) {
+    mBuilder.SetContainsBackdropFilter(false);
+  }
+
+  bool CaptureContainsBackdropFilter() {
+    // "Capture" the flag by extracting and clearing the ContainsBackdropFilter
+    // flag on the builder.
+    bool capturedBackdropFilter = mBuilder.ContainsBackdropFilter();
+    mBuilder.SetContainsBackdropFilter(false);
+    return capturedBackdropFilter;
+  }
+
+  ~AutoContainsBackdropFilterCapturer() {
+    // If CaptureContainsBackdropFilter() was called, the descendant filter was
+    // "captured" and so uncapturedContainsBackdropFilter will be false. If
+    // CaptureContainsBackdropFilter() wasn't called, then no capture occurred,
+    // and uncapturedContainsBackdropFilter may be true if there was a
+    // descendant filter. In that case, we set the flag on the DL builder so
+    // that we restore state to what it would have been without this RAII class
+    // on the stack.
+    bool uncapturedContainsBackdropFilter = mBuilder.ContainsBackdropFilter();
+    mBuilder.SetContainsBackdropFilter(mSavedContainsBackdropFilter ||
+                                       uncapturedContainsBackdropFilter);
+  }
+};
+
 // Finds the max z-index of the items in aList that meet the following
 // conditions
 //   1) have z-index auto or z-index >= 0.
@@ -3898,6 +3943,7 @@ void ScrollFrameHelper::BuildDisplayList(nsDisplayListBuilder* aBuilder,
 
   nsDisplayListCollection set(aBuilder);
   AutoContainsBlendModeCapturer blendCapture(*aBuilder);
+  AutoContainsBackdropFilterCapturer backdropFilterCapture(*aBuilder);
 
   bool willBuildAsyncZoomContainer =
       mWillBuildScrollableLayer && aBuilder->ShouldBuildAsyncZoomContainer() &&
@@ -4152,6 +4198,30 @@ void ScrollFrameHelper::BuildDisplayList(nsDisplayListBuilder* aBuilder,
       // if there's a blend container involved. There is equivalent code to this
       // in the BuildDisplayListForStackingContext function as well, with a more
       // detailed comment explaining things better.
+      if (aBuilder->IsRetainingDisplayList()) {
+        if (aBuilder->IsPartialUpdate()) {
+          aBuilder->SetPartialBuildFailed(true);
+        } else {
+          aBuilder->SetDisablePartialUpdates(true);
+        }
+      }
+    }
+
+    if (backdropFilterCapture.CaptureContainsBackdropFilter()) {
+      // The async zoom contents contain a backdrop-filter, so let's wrap all
+      // those contents into a backdrop root container, and then wrap the
+      // backdrop container in the async zoom container. Otherwise the
+      // backdrop-root container ends up outside the zoom container which
+      // results in blend failure for WebRender.
+      resultList.AppendNewToTop<nsDisplayBackdropRootContainer>(
+          aBuilder, mOuter, &resultList, aBuilder->CurrentActiveScrolledRoot());
+
+      // Backdrop root containers can be created or omitted during partial
+      // updates depending on the dirty rect. So we basically can't do partial
+      // updates if there's a backdrop root container involved. There is
+      // equivalent code to this in the BuildDisplayListForStackingContext
+      // function as well, with a more detailed comment explaining things
+      // better.
       if (aBuilder->IsRetainingDisplayList()) {
         if (aBuilder->IsPartialUpdate()) {
           aBuilder->SetPartialBuildFailed(true);
@@ -4653,9 +4723,7 @@ nsPoint ScrollFrameHelper::GetVisualViewportOffset() const {
     if (auto pendingUpdate = presShell->GetPendingVisualScrollUpdate()) {
       return pendingUpdate->mVisualScrollOffset;
     }
-    if (presShell->IsVisualViewportOffsetSet()) {
-      return presShell->GetVisualViewportOffset();
-    }
+    return presShell->GetVisualViewportOffset();
   }
   return GetScrollPosition();
 }
@@ -5636,6 +5704,10 @@ void ScrollFrameHelper::AppendAnonymousContentTo(
 }
 
 void ScrollFrameHelper::Destroy(PostDestroyData& aPostDestroyData) {
+  if (mIsRoot) {
+    mOuter->PresShell()->ResetVisualViewportOffset();
+  }
+
   mAnchor.Destroy();
 
   if (mScrollbarActivity) {
@@ -5859,7 +5931,8 @@ void ScrollFrameHelper::FireScrollEvent() {
   // Fire viewport scroll events at the document (where they
   // will bubble to the window)
   mozilla::layers::ScrollLinkedEffectDetector detector(
-      content->GetComposedDoc());
+      content->GetComposedDoc(),
+      presContext->RefreshDriver()->MostRecentRefresh());
   if (mIsRoot) {
     if (RefPtr<Document> doc = content->GetUncomposedDoc()) {
       // TODO: Bug 1506441
@@ -6576,7 +6649,7 @@ bool ScrollFrameHelper::ReflowFinished() {
     nsPoint currentScrollPos = GetScrollPosition();
     ScrollToImpl(currentScrollPos, nsRect(currentScrollPos, nsSize(0, 0)),
                  ScrollOrigin::Clamp);
-    if (!IsScrollAnimating()) {
+    if (ScrollAnimationState().isEmpty()) {
       // We need to have mDestination track the current scroll position,
       // in case it falls outside the new reflow area. mDestination is used
       // by ScrollBy as its starting position.
@@ -7127,12 +7200,12 @@ nsRect ScrollFrameHelper::GetScrolledRect() const {
   nsRect result = GetUnsnappedScrolledRectInternal(
       mScrolledFrame->ScrollableOverflowRect(), mScrollPort.Size());
 
-  if (result.width < mScrollPort.width) {
+#if 0
+  // This happens often enough.
+  if (result.width < mScrollPort.width || result.height < mScrollPort.height) {
     NS_WARNING("Scrolled rect smaller than scrollport?");
   }
-  if (result.height < mScrollPort.height) {
-    NS_WARNING("Scrolled rect smaller than scrollport?");
-  }
+#endif
 
   // Expand / contract the result by up to half a layer pixel so that scrolling
   // to the right / bottom edge does not change the layer pixel alignment of
@@ -7320,15 +7393,22 @@ bool ScrollFrameHelper::IsLastScrollUpdateAnimating() const {
   return false;
 }
 
-bool ScrollFrameHelper::IsScrollAnimating(
-    IncludeApzAnimation aIncludeApz) const {
-  if (aIncludeApz == IncludeApzAnimation::Yes && IsApzAnimationInProgress()) {
-    return true;
+using AnimationState = nsIScrollableFrame::AnimationState;
+EnumSet<AnimationState> ScrollFrameHelper::ScrollAnimationState() const {
+  EnumSet<AnimationState> retval;
+  if (IsApzAnimationInProgress()) {
+    retval += AnimationState::APZInProgress;
+  }
+  if (mApzAnimationRequested) {
+    retval += AnimationState::APZRequested;
   }
   if (IsLastScrollUpdateAnimating()) {
-    return true;
+    retval += AnimationState::APZPending;
   }
-  return mApzAnimationRequested || mAsyncScroll || mAsyncSmoothMSDScroll;
+  if (mAsyncScroll || mAsyncSmoothMSDScroll) {
+    retval += AnimationState::MainThread;
+  }
+  return retval;
 }
 
 void ScrollFrameHelper::ResetScrollInfoIfNeeded(
@@ -7355,7 +7435,11 @@ UniquePtr<PresState> ScrollFrameHelper::SaveState() const {
 
   // Don't store a scroll state if we never have been scrolled or restored
   // a previous scroll state, and we're not in the middle of a smooth scroll.
-  bool isScrollAnimating = IsScrollAnimating(IncludeApzAnimation::No);
+  auto scrollAnimationState = ScrollAnimationState();
+  bool isScrollAnimating =
+      scrollAnimationState.contains(AnimationState::MainThread) ||
+      scrollAnimationState.contains(AnimationState::APZPending) ||
+      scrollAnimationState.contains(AnimationState::APZRequested);
   if (!mHasBeenScrolled && !mDidHistoryRestore && !isScrollAnimating) {
     return nullptr;
   }

@@ -1032,9 +1032,6 @@ static void EnsureFissionAutostartInitialized() {
     } else {
       gFissionDecisionStatus = nsIXULRuntime::eFissionDisabledByE10sOther;
     }
-  } else if (gSafeMode) {
-    gFissionAutostart = false;
-    gFissionDecisionStatus = nsIXULRuntime::eFissionDisabledBySafeMode;
   } else if (EnvHasValue("MOZ_FORCE_ENABLE_FISSION")) {
     gFissionAutostart = true;
     gFissionDecisionStatus = nsIXULRuntime::eFissionEnabledByEnv;
@@ -1487,9 +1484,6 @@ nsXULAppInfo::GetFissionDecisionStatusString(nsACString& aResult) {
     case eFissionDisabledByEnv:
       aResult = "disabledByEnv";
       break;
-    case eFissionDisabledBySafeMode:
-      aResult = "disabledBySafeMode";
-      break;
     case eFissionEnabledByDefault:
       aResult = "enabledByDefault";
       break;
@@ -1681,6 +1675,13 @@ NS_IMETHODIMP
 nsXULAppInfo::GetChromeColorSchemeIsDark(bool* aResult) {
   LookAndFeel::EnsureColorSchemesInitialized();
   *aResult = LookAndFeel::ColorSchemeForChrome() == ColorScheme::Dark;
+  return NS_OK;
+}
+
+NS_IMETHODIMP
+nsXULAppInfo::GetContentThemeDerivedColorSchemeIsDark(bool* aResult) {
+  *aResult =
+      LookAndFeel::ThemeDerivedColorSchemeForContent() == ColorScheme::Dark;
   return NS_OK;
 }
 
@@ -3654,8 +3655,7 @@ static bool RemoveComponentRegistries(nsIFile* aProfileDir,
 
   file->SetNativeLeafName("startupCache"_ns);
   nsresult rv = file->Remove(true);
-  return NS_SUCCEEDED(rv) || rv == NS_ERROR_FILE_TARGET_DOES_NOT_EXIST ||
-         rv == NS_ERROR_FILE_NOT_FOUND;
+  return NS_SUCCEEDED(rv) || rv == NS_ERROR_FILE_NOT_FOUND;
 }
 
 // When we first initialize the crash reporter we don't have a profile,
@@ -3758,6 +3758,7 @@ bool fire_glxtest_process();
 #endif
 
 #include "GeckoProfiler.h"
+#include "ProfilerControl.h"
 
 // Encapsulates startup and shutdown state for XRE_main
 class XREMain {
@@ -4402,6 +4403,11 @@ int XREMain::XRE_mainInit(bool* aExitFlag) {
     mStartOffline = true;
   }
 
+  // On Windows, to get working console arrangements so help/version/etc
+  // print something, we need to initialize the native app support.
+  rv = NS_CreateNativeAppSupport(getter_AddRefs(mNativeApp));
+  if (NS_FAILED(rv)) return 1;
+
   // Handle --help, --full-version and --version command line arguments.
   // They should return quickly, so we deal with them here.
   if (CheckArg("h") || CheckArg("help") || CheckArg("?")) {
@@ -4869,9 +4875,6 @@ int XREMain::XRE_mainStartup(bool* aExitFlag) {
   setupProfilingStuff();
 #endif
 
-  rv = NS_CreateNativeAppSupport(getter_AddRefs(mNativeApp));
-  if (NS_FAILED(rv)) return 1;
-
   bool canRun = false;
   rv = mNativeApp->Start(&canRun);
   if (NS_FAILED(rv) || !canRun) {
@@ -5269,7 +5272,7 @@ nsresult XREMain::XRE_mainRun() {
 
 #if defined(XP_WIN)
   RefPtr<mozilla::DllServices> dllServices(mozilla::DllServices::Get());
-  dllServices->StartUntrustedModulesProcessor();
+  dllServices->StartUntrustedModulesProcessor(false);
   auto dllServicesDisable =
       MakeScopeExit([&dllServices]() { dllServices->DisableFull(); });
 
@@ -5458,12 +5461,32 @@ nsresult XREMain::XRE_mainRun() {
     // files can't override JS engine start-up prefs.
     mDirProvider.FinishInitializingUserPrefs();
 
-    nsAppStartupNotifier::NotifyObservers(APPSTARTUP_CATEGORY);
+    nsCOMPtr<nsIFile> workingDir;
+    rv = NS_GetSpecialDirectory(NS_OS_CURRENT_WORKING_DIR,
+                                getter_AddRefs(workingDir));
+    if (NS_FAILED(rv)) {
+      // No working dir? This can happen if it gets deleted before we start.
+      workingDir = nullptr;
+    }
+
+    cmdLine = new nsCommandLine();
+
+    rv = cmdLine->Init(gArgc, gArgv, workingDir,
+                       nsICommandLine::STATE_INITIAL_LAUNCH);
+    NS_ENSURE_SUCCESS(rv, NS_ERROR_FAILURE);
+
+    nsAppStartupNotifier::NotifyObservers(APPSTARTUP_CATEGORY, cmdLine);
 
     appStartup = components::AppStartup::Service();
     NS_ENSURE_TRUE(appStartup, NS_ERROR_FAILURE);
 
     mDirProvider.DoStartup();
+
+#ifdef XP_WIN
+    // It needs to be called on the main thread because it has to use
+    // nsObserverService.
+    EnsureWin32kInitialized();
+#endif
 
     // As FilePreferences need the profile directory, we must initialize right
     // here.
@@ -5479,21 +5502,7 @@ nsresult XREMain::XRE_mainRun() {
 
     appStartup->GetShuttingDown(&mShuttingDown);
 
-    nsCOMPtr<nsIFile> workingDir;
-    rv = NS_GetSpecialDirectory(NS_OS_CURRENT_WORKING_DIR,
-                                getter_AddRefs(workingDir));
-    if (NS_FAILED(rv)) {
-      // No working dir? This can happen if it gets deleted before we start.
-      workingDir = nullptr;
-    }
-
     if (!mShuttingDown) {
-      cmdLine = new nsCommandLine();
-
-      rv = cmdLine->Init(gArgc, gArgv, workingDir,
-                         nsICommandLine::STATE_INITIAL_LAUNCH);
-      NS_ENSURE_SUCCESS(rv, NS_ERROR_FAILURE);
-
       /* Special-case services that need early access to the command
           line. */
       nsCOMPtr<nsIObserverService> obsService =
@@ -5607,9 +5616,9 @@ nsresult XREMain::XRE_mainRun() {
       NS_ENSURE_SUCCESS(rv, NS_ERROR_FAILURE);
 
 #  ifdef MOZILLA_OFFICIAL
-      // Check if we're running from a DMG and allow the user to install to the
-      // Applications directory.
-      if (MacRunFromDmgUtils::MaybeInstallFromDmgAndRelaunch()) {
+      // Check if we're running from a DMG or an app translocated location and
+      // allow the user to install to the Applications directory.
+      if (MacRunFromDmgUtils::MaybeInstallAndRelaunch()) {
         bool userAllowedQuit = true;
         appStartup->Quit(nsIAppStartup::eForceQuit, 0, &userAllowedQuit);
       }
@@ -5915,6 +5924,18 @@ int XREMain::XRE_main(int argc, char* argv[], const BootstrapConfig& aConfig) {
   // run!
   rv = XRE_mainRun();
 
+#if defined(XP_WIN)
+  bool wantAudio = true;
+#  ifdef MOZ_BACKGROUNDTASKS
+  if (BackgroundTasks::IsBackgroundTaskMode()) {
+    wantAudio = false;
+  }
+#  endif
+  if (MOZ_LIKELY(wantAudio)) {
+    mozilla::widget::StopAudioSession();
+  }
+#endif
+
 #ifdef MOZ_INSTRUMENT_EVENT_LOOP
   mozilla::ShutdownEventTracing();
 #endif
@@ -5931,10 +5952,6 @@ int XREMain::XRE_main(int argc, char* argv[], const BootstrapConfig& aConfig) {
 #endif /* MOZ_WIDGET_GTK */
 
   mScopedXPCOM = nullptr;
-
-#if defined(XP_WIN)
-  mozilla::widget::StopAudioSession();
-#endif
 
   // unlock the profile after ScopedXPCOMStartup object (xpcom)
   // has gone out of scope.  see bug #386739 for more details

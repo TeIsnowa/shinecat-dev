@@ -115,17 +115,40 @@ const makeInternalContentScript = details => {
     scriptId: getUniqueId(),
     options: {
       allFrames: details.allFrames || false,
-      // TODO: Bug 1755976 - Add support for `details.css`.
-      cssPaths: [],
+      cssPaths: details.css || [],
       excludeMatches: details.excludeMatches,
       jsPaths: details.js || [],
       matchAboutBlank: true,
       matches: details.matches,
       originAttributesPatterns: null,
-      // TODO: Bug 1755978 - Add support for `details.runAt`.
-      runAt: "document_idle",
+      runAt: details.runAt || "document_idle",
+      persistAcrossSessions: details.persistAcrossSessions,
     },
   };
+};
+
+const ensureValidScriptId = id => {
+  if (!id.length || id.startsWith("_")) {
+    throw new ExtensionError("Invalid content script id.");
+  }
+};
+
+const ensureValidScriptParams = script => {
+  if (!script.js?.length && !script.css?.length) {
+    throw new ExtensionError("At least one js or css must be specified.");
+  }
+
+  if (!script.matches?.length) {
+    throw new ExtensionError("matches must be specified.");
+  }
+
+  // This will throw if a match pattern is invalid.
+  parseMatchPatterns(script.matches);
+
+  if (script.excludeMatches) {
+    // This will throw if a match pattern is invalid.
+    parseMatchPatterns(script.excludeMatches);
+  }
 };
 
 this.scripting = class extends ExtensionAPI {
@@ -181,9 +204,7 @@ this.scripting = class extends ExtensionAPI {
           const scriptsToRegister = new Map();
 
           for (const script of scripts) {
-            if (!script.id.length || script.id.startsWith("_")) {
-              throw new ExtensionError("Invalid content script id.");
-            }
+            ensureValidScriptId(script.id);
 
             if (scriptIdsMap.has(script.id)) {
               throw new ExtensionError(
@@ -193,45 +214,25 @@ this.scripting = class extends ExtensionAPI {
 
             if (scriptsToRegister.has(script.id)) {
               throw new ExtensionError(
-                `Attempt to register content script with id "${script.id}" more than once.`
+                `Script ID "${script.id}" found more than once in 'scripts' array.`
               );
             }
 
-            if (!script.js?.length) {
-              throw new ExtensionError("js must be specified.");
-            }
-
-            if (!script.matches?.length) {
-              throw new ExtensionError("matches must be specified.");
-            }
-
-            // This will throw if a match pattern is invalid.
-            parseMatchPatterns(script.matches);
-
-            if (script.excludeMatches) {
-              // This will throw if a match pattern is invalid.
-              parseMatchPatterns(script.excludeMatches);
-            }
+            ensureValidScriptParams(script);
 
             scriptsToRegister.set(script.id, makeInternalContentScript(script));
           }
 
-          for (const [id, { scriptId }] of scriptsToRegister.entries()) {
+          for (const [id, { scriptId, options }] of scriptsToRegister) {
             scriptIdsMap.set(id, scriptId);
+            extension.registeredContentScripts.set(scriptId, options);
           }
+          extension.updateContentScripts();
 
           await extension.broadcast("Extension:RegisterContentScripts", {
             id: extension.id,
             scripts: Array.from(scriptsToRegister.values()),
           });
-
-          for (const { scriptId, options } of scriptsToRegister.values()) {
-            extension.registeredContentScripts.set(scriptId, options);
-          }
-
-          // TODO: Bug 1756495 - Registration may be incomplete when a new
-          // process spawns during the registration.
-          extension.updateContentScripts();
         },
 
         getRegisteredContentScripts: async details => {
@@ -245,25 +246,128 @@ this.scripting = class extends ExtensionAPI {
             .map(([id, scriptId]) => {
               const options = extension.registeredContentScripts.get(scriptId);
 
-              if (!options) {
-                // When we call `getRegisteredContentScripts()` during a registration,
-                // `options` might be `undefined`. This happens when `scriptIdsMap`
-                // is already updated but `extension.registeredContentScripts` is not
-                // yet due to the broadcast.
-                return;
-              }
-
-              return {
+              let script = {
                 id,
                 allFrames: options.allFrames,
-                excludeMatches: options.excludeMatches || undefined,
-                js: options.jsPaths.map(jsPath =>
-                  jsPath.replace(extension.baseURL, "")
-                ),
                 matches: options.matches,
+                runAt: options.runAt,
+                persistAcrossSessions: options.persistAcrossSessions,
               };
-            })
-            .filter(script => script);
+
+              if (options.cssPaths.length) {
+                script.css = options.cssPaths.map(cssPath =>
+                  cssPath.replace(extension.baseURL, "")
+                );
+              }
+
+              if (options.excludeMatches?.length) {
+                script.excludeMatches = options.excludeMatches;
+              }
+
+              if (options.jsPaths.length) {
+                script.js = options.jsPaths.map(jsPath =>
+                  jsPath.replace(extension.baseURL, "")
+                );
+              }
+
+              return script;
+            });
+        },
+
+        unregisterContentScripts: async details => {
+          // Map<string, number>
+          const scriptIdsMap = gScriptIdsMap.get(extension);
+
+          let ids = [];
+
+          if (details?.ids) {
+            for (const id of details.ids) {
+              ensureValidScriptId(id);
+
+              if (!scriptIdsMap.has(id)) {
+                throw new ExtensionError(
+                  `Content script with id "${id}" does not exist.`
+                );
+              }
+            }
+
+            ids = details.ids;
+          } else {
+            ids = Array.from(scriptIdsMap.keys());
+          }
+
+          if (ids.length === 0) {
+            return;
+          }
+
+          const scriptIds = [];
+          for (const id of ids) {
+            const scriptId = scriptIdsMap.get(id);
+
+            extension.registeredContentScripts.delete(scriptId);
+            scriptIdsMap.delete(id);
+            scriptIds.push(scriptId);
+          }
+          extension.updateContentScripts();
+
+          await extension.broadcast("Extension:UnregisterContentScripts", {
+            id: extension.id,
+            scriptIds,
+          });
+        },
+
+        updateContentScripts: async scripts => {
+          // Map<string, number>
+          const scriptIdsMap = gScriptIdsMap.get(extension);
+          // Map<string, { scriptId: number, options: Object }>
+          const scriptsToUpdate = new Map();
+
+          for (const script of scripts) {
+            ensureValidScriptId(script.id);
+
+            if (!scriptIdsMap.has(script.id)) {
+              throw new ExtensionError(
+                `Content script with id "${script.id}" does not exist.`
+              );
+            }
+
+            if (scriptsToUpdate.has(script.id)) {
+              throw new ExtensionError(
+                `Script ID "${script.id}" found more than once in 'scripts' array.`
+              );
+            }
+
+            // Retrieve the existing script options.
+            const scriptId = scriptIdsMap.get(script.id);
+            const options = extension.registeredContentScripts.get(scriptId);
+
+            // Use existing values if not specified in the update.
+            script.allFrames ??= options.allFrames;
+            script.css ??= options.cssPaths;
+            script.excludeMatches ??= options.excludeMatches;
+            script.js ??= options.jsPaths;
+            script.matches ??= options.matches;
+            script.runAt ??= options.runAt;
+            script.persistAcrossSessions ??= options.persistAcrossSessions;
+
+            ensureValidScriptParams(script);
+
+            scriptsToUpdate.set(script.id, {
+              ...makeInternalContentScript(script),
+              // Re-use internal script ID.
+              scriptId,
+            });
+          }
+
+          for (const { scriptId, options } of scriptsToUpdate.values()) {
+            extension.registeredContentScripts.set(scriptId, options);
+          }
+          extension.updateContentScripts();
+
+          await extension.broadcast("Extension:UpdateContentScripts", {
+            id: extension.id,
+            scripts: Array.from(scriptsToUpdate.values()),
+          });
         },
       },
     };

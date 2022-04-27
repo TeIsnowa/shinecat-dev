@@ -132,10 +132,6 @@
 #include "nsQueryObject.h"
 #include "nsSandboxFlags.h"
 
-#if !defined(XP_WIN)
-#  include "mozilla/Omnijar.h"
-#endif
-
 #include "ChildProfilerController.h"
 
 #if defined(MOZ_SANDBOX)
@@ -230,7 +226,6 @@
 #  include <process.h>
 #  define getpid _getpid
 #  include "mozilla/WinDllServices.h"
-#  include "mozilla/widget/AudioSession.h"
 #  include "mozilla/widget/WinContentSystemParameters.h"
 #endif
 
@@ -676,7 +671,8 @@ mozilla::ipc::IPCResult ContentChild::RecvSetXPCOMProcessAttributes(
     FullLookAndFeel&& aLookAndFeelData, dom::SystemFontList&& aFontList,
     Maybe<SharedMemoryHandle>&& aSharedUASheetHandle,
     const uintptr_t& aSharedUASheetAddress,
-    nsTArray<SharedMemoryHandle>&& aSharedFontListBlocks) {
+    nsTArray<SharedMemoryHandle>&& aSharedFontListBlocks,
+    const bool& aIsReadyForBackgroundProcessing) {
   if (!sShutdownCanary) {
     return IPC_OK();
   }
@@ -691,7 +687,8 @@ mozilla::ipc::IPCResult ContentChild::RecvSetXPCOMProcessAttributes(
 
   gfx::gfxVars::SetValuesForInitialize(aXPCOMInit.gfxNonDefaultVarUpdates());
   InitSharedUASheets(std::move(aSharedUASheetHandle), aSharedUASheetAddress);
-  InitXPCOM(std::move(aXPCOMInit), aInitialData);
+  InitXPCOM(std::move(aXPCOMInit), aInitialData,
+            aIsReadyForBackgroundProcessing);
   InitGraphicsDeviceData(aXPCOMInit.contentDeviceData());
 
   return IPC_OK();
@@ -1323,7 +1320,8 @@ void ContentChild::InitSharedUASheets(Maybe<SharedMemoryHandle>&& aHandle,
 
 void ContentChild::InitXPCOM(
     XPCOMInitData&& aXPCOMInit,
-    const mozilla::dom::ipc::StructuredCloneData& aInitialData) {
+    const mozilla::dom::ipc::StructuredCloneData& aInitialData,
+    bool aIsReadyForBackgroundProcessing) {
 #ifdef MOZ_WIDGET_GTK
   // LookAndFeel::NativeInit takes a long time to run on Linux, here we schedule
   // it as soon as possible after BackgroundChild::Startup to give
@@ -1336,7 +1334,7 @@ void ContentChild::InitXPCOM(
   // DLL services untrusted modules processing depends on
   // BackgroundChild::Startup having been called
   RefPtr<DllServices> dllSvc(DllServices::Get());
-  dllSvc->StartUntrustedModulesProcessor();
+  dllSvc->StartUntrustedModulesProcessor(aIsReadyForBackgroundProcessing);
 #endif  // defined(XP_WIN)
 
   PBackgroundChild* actorChild = BackgroundChild::GetOrCreateForCurrentThread();
@@ -1461,6 +1459,14 @@ mozilla::ipc::IPCResult ContentChild::RecvGetUntrustedModulesData(
         aResolver(std::move(aData));
       },
       [aResolver](nsresult aReason) { aResolver(Nothing()); });
+  return IPC_OK();
+}
+
+mozilla::ipc::IPCResult ContentChild::RecvUnblockUntrustedModulesThread() {
+  if (nsCOMPtr<nsIObserverService> obs =
+          mozilla::services::GetObserverService()) {
+    obs->NotifyObservers(nullptr, "unblock-untrusted-modules-thread", nullptr);
+  }
   return IPC_OK();
 }
 #endif  // defined(XP_WIN)
@@ -2726,8 +2732,6 @@ mozilla::ipc::IPCResult ContentChild::RecvRemoteType(
     SetProcessName("WebExtensions"_ns);
   } else if (aRemoteType == PRIVILEGEDABOUT_REMOTE_TYPE) {
     SetProcessName("Privileged Content"_ns);
-  } else if (aRemoteType == LARGE_ALLOCATION_REMOTE_TYPE) {
-    SetProcessName("Large Allocation Web Content"_ns);
   } else if (remoteTypePrefix == WITH_COOP_COEP_REMOTE_TYPE) {
 #ifdef NIGHTLY_BUILD
     SetProcessName("WebCOOP+COEP Content"_ns);
@@ -3086,10 +3090,6 @@ void ContentChild::ShutdownInternal() {
         "content-child-shutdown started"_ns);
     os->NotifyObservers(ToSupports(this), "content-child-shutdown", nullptr);
   }
-
-#if defined(XP_WIN)
-  mozilla::widget::StopAudioSession();
-#endif
 
   GetIPCChannel()->SetAbortOnError(false);
 
@@ -4524,21 +4524,6 @@ mozilla::ipc::IPCResult ContentChild::RecvInitNextGenLocalStorageEnabled(
   }
 }
 
-mozilla::ipc::IPCResult ContentChild::RecvFlushTabState(
-    const MaybeDiscarded<BrowsingContext>& aContext,
-    FlushTabStateResolver&& aResolver) {
-  if (aContext.IsNullOrDiscarded()) {
-    aResolver(false);
-    return IPC_OK();
-  }
-
-  aContext->FlushSessionStore();
-
-  aResolver(true);
-
-  return IPC_OK();
-}
-
 mozilla::ipc::IPCResult ContentChild::RecvGoBack(
     const MaybeDiscarded<BrowsingContext>& aContext,
     const Maybe<int32_t>& aCancelContentJSEpoch, bool aRequireUserInteraction,
@@ -5004,14 +4989,6 @@ bool StartOpenBSDSandbox(GeckoProcessType type) {
   return true;
 }
 #endif
-
-#if !defined(XP_WIN)
-bool IsDevelopmentBuild() {
-  nsCOMPtr<nsIFile> path = mozilla::Omnijar::GetPath(mozilla::Omnijar::GRE);
-  // If the path doesn't exist, we're a dev build.
-  return path == nullptr;
-}
-#endif /* !XP_WIN */
 
 }  // namespace mozilla
 

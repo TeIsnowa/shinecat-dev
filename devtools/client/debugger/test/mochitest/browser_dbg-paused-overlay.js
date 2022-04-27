@@ -4,6 +4,8 @@
 
 // Tests the paused overlay
 
+"use strict";
+
 add_task(async function() {
   const dbg = await initDebugger("doc-scripts.html");
 
@@ -42,7 +44,7 @@ add_task(async function() {
     "paused-dbg-resume-button"
   );
 
-  await waitFor(() => !isPaused(dbg), "Wait for the debugger to resume");
+  await waitForResumed(dbg);
   ok("The debugger isn't paused after clicking on the resume button");
 
   await waitFor(async () => {

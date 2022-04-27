@@ -430,12 +430,14 @@ static bool IsMessageGamepadUserActivity(EventMessage aMessage) {
          aMessage == eGamepadAxisMove;
 }
 
-// We ignore things that shouldn't cause popups, but also things that look
-// like shortcut presses. In some obscure cases these may actually be
-// website input, but any meaningful website will have other input anyway,
-// and we can't very well tell whether shortcut input was supposed to be
-// directed at chrome or the document.
-static bool IsKeyboardEventUserActivity(WidgetEvent* aEvent) {
+// static
+bool EventStateManager::IsKeyboardEventUserActivity(WidgetEvent* aEvent) {
+  // We ignore things that shouldn't cause popups, but also things that look
+  // like shortcut presses. In some obscure cases these may actually be
+  // website input, but any meaningful website will have other input anyway,
+  // and we can't very well tell whether shortcut input was supposed to be
+  // directed at chrome or the document.
+
   WidgetKeyboardEvent* keyEvent = aEvent->AsKeyboardEvent();
   // Access keys should be treated as page interaction.
   if (keyEvent->ModifiersMatchWithAccessKey(AccessKeyType::eContent)) {
@@ -491,7 +493,7 @@ static void OnTypingInteractionEnded() {
 }
 
 static void HandleKeyUpInteraction(WidgetKeyboardEvent* aKeyEvent) {
-  if (IsKeyboardEventUserActivity(aKeyEvent)) {
+  if (EventStateManager::IsKeyboardEventUserActivity(aKeyEvent)) {
     TimeStamp now = TimeStamp::Now();
     if (gTypingEndTime.IsNull()) {
       gTypingEndTime = now;
@@ -606,7 +608,8 @@ nsresult EventStateManager::PreHandleEvent(nsPresContext* aPresContext,
     // of device pixels means behavior can be a bit odd if you zoom while
     // pointer-locked.
     sLastScreenPoint =
-        Event::GetScreenCoords(aPresContext, aEvent, aEvent->mRefPoint);
+        Event::GetScreenCoords(aPresContext, aEvent, aEvent->mRefPoint)
+            .extract();
     sLastClientPoint = Event::GetClientCoords(
         aPresContext, aEvent, aEvent->mRefPoint, CSSIntPoint(0, 0));
   }
@@ -3873,7 +3876,8 @@ nsresult EventStateManager::PostHandleEvent(nsPresContext* aPresContext,
           // it).
           if (sourceWC) {
             CSSIntPoint dropPointInScreen =
-                Event::GetScreenCoords(aPresContext, aEvent, aEvent->mRefPoint);
+                Event::GetScreenCoords(aPresContext, aEvent, aEvent->mRefPoint)
+                    .extract();
             dragSession->SetDragEndPointForTests(dropPointInScreen.x,
                                                  dropPointInScreen.y);
           }

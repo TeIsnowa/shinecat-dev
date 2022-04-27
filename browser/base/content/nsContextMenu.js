@@ -224,6 +224,7 @@ class nsContextMenu {
     this.onLink = context.onLink;
     this.onLoadedImage = context.onLoadedImage;
     this.onMailtoLink = context.onMailtoLink;
+    this.onTelLink = context.onTelLink;
     this.onMozExtLink = context.onMozExtLink;
     this.onNumeric = context.onNumeric;
     this.onPassword = context.onPassword;
@@ -334,6 +335,7 @@ class nsContextMenu {
     this.initViewItems();
     this.initImageItems();
     this.initMiscItems();
+    this.initPocketItems();
     this.initSpellingItems();
     this.initSaveItems();
     this.initSyncItems();
@@ -712,7 +714,10 @@ class nsContextMenu {
 
     this.showItem(
       "context-bookmarklink",
-      (this.onLink && !this.onMailtoLink && !this.onMozExtLink) ||
+      (this.onLink &&
+        !this.onMailtoLink &&
+        !this.onTelLink &&
+        !this.onMozExtLink) ||
         this.onPlainTextLink
     );
     this.showItem("context-keywordfield", this.shouldShowAddKeyword());
@@ -754,6 +759,51 @@ class nsContextMenu {
       "context-bidi-page-direction-toggle",
       !this.onTextInput && top.gBidiUI
     );
+  }
+
+  initPocketItems() {
+    const pocketEnabled = Services.prefs.getBoolPref(
+      "extensions.pocket.enabled"
+    );
+    let showSaveCurrentPageToPocket = false;
+    let showSaveLinkToPocket = false;
+
+    // We can skip all this is Pocket is not enabled.
+    if (pocketEnabled) {
+      let targetURL, targetURI;
+      // If the context menu is opened over a link, we target the link,
+      // if not, we target the page.
+      if (this.onLink) {
+        targetURL = this.linkURL;
+        // linkURI may be null if the URL is invalid.
+        targetURI = this.linkURI;
+      } else {
+        targetURL = this.browser?.currentURI?.spec;
+        targetURI = Services.io.newURI(targetURL);
+      }
+
+      const canPocket =
+        targetURI?.schemeIs("http") ||
+        targetURI?.schemeIs("https") ||
+        (targetURI?.schemeIs("about") && ReaderMode?.getOriginalUrl(targetURL));
+
+      // If the target is valid, decide which menu item to enable.
+      if (canPocket) {
+        showSaveLinkToPocket = this.onLink;
+        showSaveCurrentPageToPocket = !(
+          this.onTextInput ||
+          this.onLink ||
+          this.isContentSelected ||
+          this.onImage ||
+          this.onCanvas ||
+          this.onVideo ||
+          this.onAudio
+        );
+      }
+    }
+
+    this.showItem("context-pocket", showSaveCurrentPageToPocket);
+    this.showItem("context-savelinktopocket", showSaveLinkToPocket);
   }
 
   initSpellingItems() {
@@ -836,14 +886,25 @@ class nsContextMenu {
     // Copy email link depends on whether we're on an email link.
     this.showItem("context-copyemail", this.onMailtoLink);
 
+    // Copy phone link depends on whether we're on a phone link.
+    this.showItem("context-copyphone", this.onTelLink);
+
     // Copy link location depends on whether we're on a non-mailto link.
-    this.showItem("context-copylink", this.onLink && !this.onMailtoLink);
+    this.showItem(
+      "context-copylink",
+      this.onLink && !this.onMailtoLink && !this.onTelLink
+    );
+
     let copyLinkSeparator = document.getElementById("context-sep-copylink");
     // Show "Copy Link" and "Copy" with no divider, and "copy link" and "Send link to Device" with no divider between.
     // Other cases will show a divider.
     copyLinkSeparator.toggleAttribute(
       "ensureHidden",
-      this.onLink && !this.onMailtoLink && !this.onImage && this.syncItemsShown
+      this.onLink &&
+        !this.onMailtoLink &&
+        !this.onTelLink &&
+        !this.onImage &&
+        this.syncItemsShown
     );
 
     this.showItem("context-copyvideourl", this.onVideo);
@@ -1921,6 +1982,26 @@ class nsContextMenu {
       Ci.nsIClipboardHelper
     );
     clipboard.copyString(addresses);
+  }
+
+  // Extract phone and put it on clipboard
+  copyPhone() {
+    // Copies the phone number only. We won't be doing any complex parsing
+    var url = this.linkURL;
+    var phone = url.substr(4);
+
+    // Let's try to unescape it using a character set
+    // in case the phone number is not ASCII.
+    try {
+      phone = Services.textToSubURI.unEscapeURIForUI(phone);
+    } catch (ex) {
+      // Do nothing.
+    }
+
+    var clipboard = Cc["@mozilla.org/widget/clipboardhelper;1"].getService(
+      Ci.nsIClipboardHelper
+    );
+    clipboard.copyString(phone);
   }
 
   copyLink() {

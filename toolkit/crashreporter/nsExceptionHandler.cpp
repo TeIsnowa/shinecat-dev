@@ -30,7 +30,6 @@
 #include "nsThreadUtils.h"
 #include "nsThread.h"
 #include "jsfriendapi.h"
-#include "ThreadAnnotation.h"
 #include "private/pprio.h"
 #include "base/process_util.h"
 #include "common/basictypes.h"
@@ -252,7 +251,7 @@ static bool sIncludeContextHeap = false;
 
 // OOP crash reporting
 static CrashGenerationServer* crashServer;  // chrome process has this
-static StaticMutex processMapLock;
+static StaticMutex processMapLock MOZ_UNANNOTATED;
 static std::map<ProcessId, PRFileDesc*> processToCrashFd;
 
 static std::terminate_handler oldTerminateHandler = nullptr;
@@ -1379,15 +1378,6 @@ static void WriteAnnotationsForMainProcessCrash(PlatformWriter& pw,
 #ifdef MOZ_PHC
   WritePHCAddrInfo(writer, addrInfo);
 #endif
-
-  std::function<void(const char*)> getThreadAnnotationCB =
-      [&](const char* aValue) -> void {
-    if (aValue) {
-      writer.Write(Annotation::ThreadIdNameMapping, aValue);
-    }
-  };
-  GetFlatThreadAnnotation(getThreadAnnotationCB,
-                          /* aIsHandlingException */ true);
 }
 
 static void WriteCrashEventFile(time_t crashTime, const char* crashTimeString,
@@ -1656,15 +1646,6 @@ static void PrepareChildExceptionTimeAnnotations(
   WritePHCAddrInfo(writer, addrInfo);
 #endif
 
-  std::function<void(const char*)> getThreadAnnotationCB =
-      [&](const char* aValue) -> void {
-    if (aValue) {
-      writer.Write(Annotation::ThreadIdNameMapping, aValue);
-    }
-  };
-  GetFlatThreadAnnotation(getThreadAnnotationCB,
-                          /* aIsHandlingException */ true);
-
   WriteAnnotations(writer, crashReporterAPIData_Table);
 }
 
@@ -1907,7 +1888,6 @@ static void InitializeAnnotationFacilities() {
   crashReporterAPILock = new Mutex("crashReporterAPILock");
   notesFieldLock = new Mutex("notesFieldLock");
   notesField = new nsCString();
-  InitThreadAnnotation();
   if (!XRE_IsParentProcess()) {
     InitChildAnnotationsFlusher();
   }
@@ -1925,8 +1905,6 @@ static void TeardownAnnotationFacilities() {
 
   delete notesField;
   notesField = nullptr;
-
-  ShutdownThreadAnnotation();
 }
 
 #ifdef XP_WIN
@@ -3278,9 +3256,9 @@ static void MaybeAnnotateDumperError(const ClientInfo& aClientInfo,
 #endif
 }
 
-static void OnChildProcessDumpRequested(void* aContext,
-                                        const ClientInfo& aClientInfo,
-                                        const xpstring& aFilePath) {
+static void OnChildProcessDumpRequested(
+    void* aContext, const ClientInfo& aClientInfo,
+    const xpstring& aFilePath) NO_THREAD_SAFETY_ANALYSIS {
   nsCOMPtr<nsIFile> minidump;
 
   // Hold the mutex until the current dump request is complete, to
@@ -3325,8 +3303,8 @@ static void OnChildProcessDumpRequested(void* aContext,
   }
 }
 
-static void OnChildProcessDumpWritten(void* aContext,
-                                      const ClientInfo& aClientInfo) {
+static void OnChildProcessDumpWritten(
+    void* aContext, const ClientInfo& aClientInfo) NO_THREAD_SAFETY_ANALYSIS {
   ProcessId pid = aClientInfo.pid();
   ChildProcessData* pd = pidToMinidump->GetEntry(pid);
   MOZ_ASSERT(pd);
@@ -3801,7 +3779,6 @@ static mach_port_t GetChildThread(ProcessHandle childPid,
 bool CreateMinidumpsAndPair(ProcessHandle aTargetHandle,
                             ThreadId aTargetBlamedThread,
                             const nsACString& aIncomingPairName,
-                            nsIFile* aIncomingDumpToPair,
                             AnnotationTable& aTargetAnnotations,
                             nsIFile** aMainDumpOut) {
   if (!GetEnabled()) {
@@ -3836,25 +3813,21 @@ bool CreateMinidumpsAndPair(ProcessHandle aTargetHandle,
     return false;
   }
 
-  // If aIncomingDumpToPair isn't valid, create a dump of this process.
+  // Create a dump of this process.
   nsCOMPtr<nsIFile> incomingDump;
-  if (aIncomingDumpToPair == nullptr) {
-    if (!google_breakpad::ExceptionHandler::WriteMinidump(
-            dump_path,
+  if (!google_breakpad::ExceptionHandler::WriteMinidump(
+          dump_path,
 #ifdef XP_MACOSX
-            true,
+          true,
 #endif
-            PairedDumpCallback, static_cast<void*>(&incomingDump)
+          PairedDumpCallback, static_cast<void*>(&incomingDump)
 #ifdef XP_WIN
-                                    ,
-            GetMinidumpType()
+                                  ,
+          GetMinidumpType()
 #endif
-                )) {
-      targetMinidump->Remove(false);
-      return false;
-    }
-  } else {
-    incomingDump = aIncomingDumpToPair;
+              )) {
+    targetMinidump->Remove(false);
+    return false;
   }
 
   RenameAdditionalHangMinidump(incomingDump, targetMinidump, aIncomingPairName);
@@ -3874,43 +3847,6 @@ bool CreateMinidumpsAndPair(ProcessHandle aTargetHandle,
   }
 
   targetMinidump.forget(aMainDumpOut);
-
-  return true;
-}
-
-bool CreateAdditionalChildMinidump(ProcessHandle childPid,
-                                   ThreadId childBlamedThread,
-                                   nsIFile* parentMinidump,
-                                   const nsACString& name) {
-  if (!GetEnabled()) return false;
-
-#ifdef XP_MACOSX
-  mach_port_t childThread = GetChildThread(childPid, childBlamedThread);
-#else
-  ThreadId childThread = childBlamedThread;
-#endif
-
-  xpstring dump_path;
-#ifndef XP_LINUX
-  dump_path = gExceptionHandler->dump_path();
-#else
-  dump_path = gExceptionHandler->minidump_descriptor().directory();
-#endif
-
-  // dump the child
-  nsCOMPtr<nsIFile> childMinidump;
-  if (!google_breakpad::ExceptionHandler::WriteMinidumpForChild(
-          childPid, childThread, dump_path, PairedDumpCallback,
-          static_cast<void*>(&childMinidump)
-#ifdef XP_WIN
-              ,
-          GetMinidumpType()
-#endif
-              )) {
-    return false;
-  }
-
-  RenameAdditionalHangMinidump(childMinidump, parentMinidump, name);
 
   return true;
 }

@@ -2,6 +2,8 @@
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at <http://mozilla.org/MPL/2.0/>. */
 
+"use strict";
+
 // Tests for preview through Babel's compile output.
 requestLongerTimeout(3);
 
@@ -26,7 +28,7 @@ async function breakpointPreviews(
     c.toUpperCase()
   );
 
-  log(`Starting ${fixture} tests`);
+  info(`Starting ${fixture} tests`);
 
   await invokeWithBreakpoint(dbg, fnName, url, { line, column }, async () => {
     await assertPreviews(dbg, previews);

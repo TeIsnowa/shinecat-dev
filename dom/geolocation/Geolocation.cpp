@@ -43,6 +43,11 @@ class nsIPrincipal;
 #  include "GpsdLocationProvider.h"
 #endif
 
+#ifdef MOZ_ENABLE_DBUS
+#  include "mozilla/WidgetUtilsGtk.h"
+#  include "PortalLocationProvider.h"
+#endif
+
 #ifdef MOZ_WIDGET_COCOA
 #  include "CoreLocationLocationProvider.h"
 #endif
@@ -298,8 +303,7 @@ nsGeolocationRequest::Allow(JS::HandleValue aChoices) {
   }
 
   // Kick off the geo device, if it isn't already running
-  nsCOMPtr<nsIPrincipal> principal = GetPrincipal();
-  nsresult rv = gs->StartDevice(principal);
+  nsresult rv = gs->StartDevice();
 
   if (NS_FAILED(rv)) {
     // Location provider error
@@ -495,6 +499,11 @@ nsresult nsGeolocationService::Init() {
     mProvider = new GpsdLocationProvider();
   }
 #  endif
+#  ifdef MOZ_ENABLE_DBUS
+  if (!mProvider && widget::ShouldUsePortal(widget::PortalKind::Location)) {
+    mProvider = new PortalLocationProvider();
+  }
+#  endif
 #endif
 
 #ifdef MOZ_WIDGET_COCOA
@@ -601,7 +610,7 @@ CachedPositionAndAccuracy nsGeolocationService::GetCachedPosition() {
   return mLastPosition;
 }
 
-nsresult nsGeolocationService::StartDevice(nsIPrincipal* aPrincipal) {
+nsresult nsGeolocationService::StartDevice() {
   if (!StaticPrefs::geo_enabled()) {
     return NS_ERROR_NOT_AVAILABLE;
   }

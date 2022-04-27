@@ -13,8 +13,6 @@ const MAX_ORDINAL = 99;
 const SPLITCONSOLE_ENABLED_PREF = "devtools.toolbox.splitconsoleEnabled";
 const SPLITCONSOLE_HEIGHT_PREF = "devtools.toolbox.splitconsoleHeight";
 const DISABLE_AUTOHIDE_PREF = "ui.popup.disable_autohide";
-const FORCE_THEME_NOTIFICATION_PREF = "devtools.theme.force-auto-theme-info";
-const SHOW_THEME_NOTIFICATION_PREF = "devtools.theme.show-auto-theme-info";
 const PSEUDO_LOCALE_PREF = "intl.l10n.pseudo";
 const HOST_HISTOGRAM = "DEVTOOLS_TOOLBOX_HOST";
 const CURRENT_THEME_SCALAR = "devtools.current_theme";
@@ -808,58 +806,6 @@ Toolbox.prototype = {
     );
   },
 
-  _showAutoThemeNotification() {
-    // Skip the notification when:
-    if (
-      // - Firefox is not using a dark color scheme.
-      !Services.appinfo.chromeColorSchemeIsDark &&
-      // - The test preference to bypasse the dark-color-scheme check is false.
-      !Services.prefs.getBoolPref(FORCE_THEME_NOTIFICATION_PREF, false)
-    ) {
-      return;
-    }
-
-    // Only show the notification for users with the auto theme.
-    if (Services.prefs.getCharPref("devtools.theme") !== "auto") {
-      return;
-    }
-
-    // Do not show the notification again if it was previously dismissed.
-    if (!Services.prefs.getBoolPref(SHOW_THEME_NOTIFICATION_PREF, false)) {
-      return;
-    }
-
-    // Show the notification.
-    const box = this.getNotificationBox();
-    const brandShorterName = Services.strings
-      .createBundle("chrome://branding/locale/brand.properties")
-      .GetStringFromName("brandShorterName");
-
-    box.appendNotification(
-      L10N.getFormatStr("toolbox.autoThemeNotification", brandShorterName),
-      "auto-theme-notification",
-      "",
-      box.PRIORITY_NEW,
-      [
-        {
-          label: L10N.getStr("toolbox.autoThemeNotification.settingsButton"),
-          callback: async () => {
-            const { panelDoc } = await this.selectTool("options");
-            panelDoc.querySelector("#devtools-theme-box").scrollIntoView();
-            // Emit a test event to avoid unhandled promise rejections in tests.
-            this.emitForTests("test-theme-settings-opened");
-          },
-        },
-      ],
-      evt => {
-        if (evt === "removed") {
-          // Flip the preference when the notification is dismissed.
-          Services.prefs.setBoolPref(SHOW_THEME_NOTIFICATION_PREF, false);
-        }
-      }
-    );
-  },
-
   /**
    * Open the toolbox
    */
@@ -1011,11 +957,11 @@ Toolbox.prototype = {
 
       this._pingTelemetry();
 
-      // The isTargetSupported check needs to happen after the target is
+      // The isToolSupported check needs to happen after the target is
       // remoted, otherwise we could have done it in the toolbox constructor
       // (bug 1072764).
       const toolDef = gDevTools.getToolDefinition(this._defaultToolId);
-      if (!toolDef || !toolDef.isTargetSupported(this.target)) {
+      if (!toolDef || !toolDef.isToolSupported(this)) {
         this._defaultToolId = "webconsole";
       }
 
@@ -1090,8 +1036,6 @@ Toolbox.prototype = {
       }
 
       await this.initHarAutomation();
-
-      this._showAutoThemeNotification();
 
       this.emit("ready");
       this._resolveIsOpen();
@@ -1633,8 +1577,8 @@ Toolbox.prototype = {
    *                      unregister listeners set when `setup` was called and avoid
    *                      memory leaks. The same arguments than `setup` function are
    *                      passed to `teardown`.
-   * @property {Function} isTargetSupported - Function to automatically enable/disable
-   *                      the button based on the target. If the target don't support
+   * @property {Function} isToolSupported - Function to automatically enable/disable
+   *                      the button based on the toolbox. If the toolbox don't support
    *                      the button feature, this method should return false.
    * @property {Function} isCurrentlyVisible - Function to automatically
    *                      hide/show the button based on current state.
@@ -1653,7 +1597,7 @@ Toolbox.prototype = {
       isInStartContainer,
       setup,
       teardown,
-      isTargetSupported,
+      isToolSupported,
       isCurrentlyVisible,
       isChecked,
       onKeyDown,
@@ -1676,7 +1620,7 @@ Toolbox.prototype = {
           onKeyDown(event, toolbox);
         }
       },
-      isTargetSupported,
+      isToolSupported,
       isCurrentlyVisible,
       get isChecked() {
         if (typeof isChecked == "function") {
@@ -1910,7 +1854,7 @@ Toolbox.prototype = {
     // Get the definitions that will only affect the main tab area.
     this.panelDefinitions = definitions.filter(
       definition =>
-        definition.isTargetSupported(this.target) && definition.id !== "options"
+        definition.isToolSupported(this) && definition.id !== "options"
     );
 
     // Do async lookups for the target browser's state.
@@ -2048,8 +1992,8 @@ Toolbox.prototype = {
     this.frameButton = this._createButtonState({
       id: "command-button-frames",
       description: L10N.getStr("toolbox.frames.tooltip"),
-      isTargetSupported: target => {
-        return target.getTrait("frames");
+      isToolSupported: toolbox => {
+        return toolbox.target.getTrait("frames");
       },
       isCurrentlyVisible: () => {
         const hasFrames = this.frameMap.size > 1;
@@ -2068,7 +2012,7 @@ Toolbox.prototype = {
     this.errorCountButton = this._createButtonState({
       id: "command-button-errorcount",
       isInStartContainer: false,
-      isTargetSupported: target => true,
+      isToolSupported: toolbox => true,
       description: L10N.getStr("toolbox.errorCountButton.description"),
     });
     // Use updateErrorCountButton to set some properties so we don't have to repeat
@@ -2196,8 +2140,8 @@ Toolbox.prototype = {
       description: this._getPickerTooltip(),
       onClick: this._onPickerClick,
       isInStartContainer: true,
-      isTargetSupported: target => {
-        return target.getTrait("frames");
+      isToolSupported: toolbox => {
+        return toolbox.target.getTrait("frames");
       },
     });
 
@@ -2361,7 +2305,7 @@ Toolbox.prototype = {
 
     // We need to do something a bit different to avoid some test failures. This function
     // can be called from onWillNavigate, and the current target might have this `traits`
-    // property nullifed, which is unfortunate as that's what isTargetSupported is checking,
+    // property nullifed, which is unfortunate as that's what isToolSupported is checking,
     // so it will throw.
     // So here, we check first if the button isn't going to be visible anyway (it only checks
     // for this.frameMap size) so we don't call _commandIsVisible.
@@ -2386,13 +2330,13 @@ Toolbox.prototype = {
    * Ensure the visibility of each toolbox button matches the preference value.
    */
   _commandIsVisible: function(button) {
-    const { isTargetSupported, isCurrentlyVisible, visibilityswitch } = button;
+    const { isToolSupported, isCurrentlyVisible, visibilityswitch } = button;
 
     if (!Services.prefs.getBoolPref(visibilityswitch, true)) {
       return false;
     }
 
-    if (isTargetSupported && !isTargetSupported(this.target)) {
+    if (isToolSupported && !isToolSupported(this)) {
       return false;
     }
 
@@ -2410,7 +2354,7 @@ Toolbox.prototype = {
    *        Tool definition of the tool to build a tab for.
    */
   _buildPanelForTool: function(toolDefinition) {
-    if (!toolDefinition.isTargetSupported(this.target)) {
+    if (!toolDefinition.isToolSupported(this)) {
       return;
     }
 
@@ -3235,7 +3179,11 @@ Toolbox.prototype = {
       this.isBrowserToolbox &&
       Services.prefs.getBoolPref("devtools.browsertoolbox.fission", false);
 
-    if (isMultiProcessBrowserToolbox) {
+    if (this.target.isXpcShellTarget) {
+      // This will only be displayed for local development and can remain
+      // hardcoded in english.
+      title = "XPCShell Toolbox";
+    } else if (isMultiProcessBrowserToolbox) {
       title = L10N.getStr("toolbox.multiProcessBrowserToolboxTitle");
     } else if (this.target.name && this.target.name != this.target.url) {
       const url = this.target.isWebExtension
@@ -3756,7 +3704,7 @@ Toolbox.prototype = {
       isAdditionalTool = true;
     }
 
-    if (definition.isTargetSupported(this.target)) {
+    if (definition.isToolSupported(this)) {
       if (isAdditionalTool) {
         this.visibleAdditionalTools = [...this.visibleAdditionalTools, toolId];
         this._combineAndSortPanelDefinitions();

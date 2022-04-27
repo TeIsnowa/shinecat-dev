@@ -1615,7 +1615,7 @@ void nsChildView::ConfigureAPZCTreeManager() { nsBaseWidget::ConfigureAPZCTreeMa
 
 void nsChildView::ConfigureAPZControllerThread() { nsBaseWidget::ConfigureAPZControllerThread(); }
 
-bool nsChildView::PreRender(WidgetRenderingContext* aContext) {
+bool nsChildView::PreRender(WidgetRenderingContext* aContext) NO_THREAD_SAFETY_ANALYSIS {
   // The lock makes sure that we don't attempt to tear down the view while
   // compositing. That would make us unable to call postRender on it when the
   // composition is done, thus keeping the GL context locked forever.
@@ -1628,7 +1628,9 @@ bool nsChildView::PreRender(WidgetRenderingContext* aContext) {
   return true;
 }
 
-void nsChildView::PostRender(WidgetRenderingContext* aContext) { mCompositingLock.Unlock(); }
+void nsChildView::PostRender(WidgetRenderingContext* aContext) NO_THREAD_SAFETY_ANALYSIS {
+  mCompositingLock.Unlock();
+}
 
 RefPtr<layers::NativeLayerRoot> nsChildView::GetNativeLayerRoot() { return mNativeLayerRoot; }
 
@@ -2739,43 +2741,49 @@ NSEvent* gLastDragMouseDownEvent = nil;  // [strong]
 }
 
 - (bool)shouldConsiderStartingSwipeFromEvent:(NSEvent*)anEvent {
-  // This method checks whether the AppleEnableSwipeNavigateWithScrolls global
-  // preference is set.  If it isn't, fluid swipe tracking is disabled, and a
-  // horizontal two-finger gesture is always a scroll (even in Safari).  This
-  // preference can't (currently) be set from the Preferences UI -- only using
-  // 'defaults write'.
-  if (![NSEvent isSwipeTrackingFromScrollEventsEnabled]) {
-    return false;
-  }
-
   // Only initiate horizontal tracking for gestures that have just begun --
   // otherwise a scroll to one side of the page can have a swipe tacked on
   // to it.
+  // [NSEvent isSwipeTrackingFromScrollEventsEnabled] checks whether the
+  // AppleEnableSwipeNavigateWithScrolls global preference is set.  If it isn't,
+  // fluid swipe tracking is disabled, and a horizontal two-finger gesture is
+  // always a scroll (even in Safari).  This preference can't (currently) be set
+  // from the Preferences UI -- only using 'defaults write'.
   NSEventPhase eventPhase = [anEvent phase];
   return [anEvent type] == NSEventTypeScrollWheel && eventPhase == NSEventPhaseBegan &&
-         [anEvent hasPreciseScrollingDeltas];
+         [anEvent hasPreciseScrollingDeltas] && [NSEvent isSwipeTrackingFromScrollEventsEnabled];
 }
 
 - (void)setUsingOMTCompositor:(BOOL)aUseOMTC {
   mUsingOMTCompositor = aUseOMTC;
 }
 
-// Returning NO from this method only disallows ordering on mousedown - in order
-// to prevent it for mouseup too, we need to call [NSApp preventWindowOrdering]
-// when handling the mousedown event.
+// By default, clicking on a window brings the clicked window to the foreground.
+// This method is called before -[NSView mouseDown:] in order to influence that behavior.
 - (BOOL)shouldDelayWindowOrderingForEvent:(NSEvent*)aEvent {
-  // Always using system-provided window ordering for normal windows.
-  if (![[self window] isKindOfClass:[PopupWindow class]]) return NO;
+  NSWindow* window = self.window;
 
-  // Don't reorder when we don't have a parent window, like when we're a
-  // context menu or a tooltip.
-  return ![[self window] parentWindow];
+  // Prevent reordering for clicks on context menus or tooltips. These are implemented
+  // as PopupWindows without parent windows.
+  if ([window isKindOfClass:[PopupWindow class]] && !window.parentWindow) {
+    return YES;
+  }
+
+  // Prevent reordering for clicks on always-on-top video like the Picture-in-picture window.
+  if (window.level == NSFloatingWindowLevel) {
+    return YES;
+  }
+
+  return NO;
 }
 
 - (void)mouseDown:(NSEvent*)theEvent {
   NS_OBJC_BEGIN_TRY_IGNORE_BLOCK;
 
   if ([self shouldDelayWindowOrderingForEvent:theEvent]) {
+    // By default, returning NO from shouldDelayWindowOrderingForEvent delays reordering
+    // so that it happens on the mouseup rather than on the mousedown. In order to prevent
+    // reordering entirely, we also need to call [NSApp preventWindowOrdering].
     [NSApp preventWindowOrdering];
   }
 
@@ -3245,19 +3253,6 @@ static gfx::IntPoint GetIntegerDeltaForEvent(NSEvent* aEvent) {
     if (!shouldIgnoreDeltas) {
       panEvent.mPanDisplacement = preciseDelta;
       panEvent.SetLineOrPageDeltas(lineOrPageDelta.x, lineOrPageDelta.y);
-    }
-
-    if (panEvent.mType == PanGestureInput::PANGESTURE_END) {
-      // Check if there's a momentum start event in the event queue, so that we
-      // can annotate this event.
-      NSEvent* nextWheelEvent = [NSApp nextEventMatchingMask:NSEventMaskScrollWheel
-                                                   untilDate:[NSDate distantPast]
-                                                      inMode:NSDefaultRunLoopMode
-                                                     dequeue:NO];
-      if (nextWheelEvent &&
-          PanGestureTypeForEvent(nextWheelEvent) == PanGestureInput::PANGESTURE_MOMENTUMSTART) {
-        panEvent.mFollowedByMomentum = true;
-      }
     }
 
     bool canTriggerSwipe = [self shouldConsiderStartingSwipeFromEvent:theEvent] &&

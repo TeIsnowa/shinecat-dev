@@ -10,6 +10,7 @@
 #include "gfxPlatform.h"
 #include "GPUProcessHost.h"
 #include "GPUProcessListener.h"
+#include "mozilla/AppShutdown.h"
 #include "mozilla/MemoryReportingProcess.h"
 #include "mozilla/Preferences.h"
 #include "mozilla/Sprintf.h"
@@ -37,6 +38,7 @@
 #include "mozilla/layers/InProcessCompositorSession.h"
 #include "mozilla/layers/LayerTreeOwnerTracker.h"
 #include "mozilla/layers/RemoteCompositorSession.h"
+#include "mozilla/webrender/RenderThread.h"
 #include "mozilla/widget/PlatformWidgetTypes.h"
 #include "nsAppRunner.h"
 #include "mozilla/widget/CompositorWidget.h"
@@ -134,7 +136,7 @@ GPUProcessManager::Observer::Observe(nsISupports* aSubject, const char* aTopic,
   } else if (!strcmp(aTopic, "application-foreground")) {
     mManager->mAppInForeground = true;
     if (!mManager->mProcess && gfxConfig::IsEnabled(Feature::GPU_PROCESS)) {
-      mManager->LaunchGPUProcess();
+      Unused << mManager->LaunchGPUProcess();
     }
   } else if (!strcmp(aTopic, "application-background")) {
     mManager->mAppInForeground = false;
@@ -176,9 +178,13 @@ void GPUProcessManager::OnPreferenceChange(const char16_t* aData) {
   }
 }
 
-void GPUProcessManager::LaunchGPUProcess() {
+bool GPUProcessManager::LaunchGPUProcess() {
   if (mProcess) {
-    return;
+    return true;
+  }
+
+  if (AppShutdown::IsInOrBeyond(ShutdownPhase::XPCOMShutdown)) {
+    return false;
   }
 
   // Start listening for pref changes so we can
@@ -223,6 +229,8 @@ void GPUProcessManager::LaunchGPUProcess() {
   if (!mProcess->Launch(extraArgs)) {
     DisableGPUProcess("Failed to launch GPU process");
   }
+
+  return true;
 }
 
 bool GPUProcessManager::IsGPUProcessLaunching() {
@@ -285,7 +293,9 @@ bool GPUProcessManager::EnsureGPUReady() {
 
   // Launch the GPU process if it is enabled but hasn't been (re-)launched yet.
   if (!mProcess && gfxConfig::IsEnabled(Feature::GPU_PROCESS)) {
-    LaunchGPUProcess();
+    if (!LaunchGPUProcess()) {
+      return false;
+    }
   }
 
   if (mProcess && !mProcess->IsConnected()) {
@@ -398,7 +408,7 @@ GPUProcessManager::CreateUiCompositorController(nsBaseWidget* aWidget,
   RefPtr<UiCompositorControllerChild> result;
 
   if (!EnsureGPUReady()) {
-    result = UiCompositorControllerChild::CreateForSameProcess(aId);
+    result = UiCompositorControllerChild::CreateForSameProcess(aId, aWidget);
   } else {
     ipc::Endpoint<PUiCompositorControllerParent> parentPipe;
     ipc::Endpoint<PUiCompositorControllerChild> childPipe;
@@ -412,15 +422,12 @@ GPUProcessManager::CreateUiCompositorController(nsBaseWidget* aWidget,
 
     mGPUChild->SendInitUiCompositorController(aId, std::move(parentPipe));
     result = UiCompositorControllerChild::CreateForGPUProcess(
-        mProcessToken, std::move(childPipe));
+        mProcessToken, std::move(childPipe), aWidget);
 
     if (result) {
       result->SetCompositorSurfaceManager(
           mProcess->GetCompositorSurfaceManager());
     }
-  }
-  if (result) {
-    result->SetBaseWidget(aWidget);
   }
   return result.forget();
 }
@@ -508,13 +515,11 @@ void GPUProcessManager::SimulateDeviceReset() {
   gfxPlatform::GetPlatform()->CompositorUpdated();
 
   if (mProcess) {
-    GPUDeviceData data;
-    if (mGPUChild && mGPUChild->SendSimulateDeviceReset(&data)) {
-      gfxPlatform::GetPlatform()->ImportGPUDeviceData(data);
+    if (mGPUChild) {
+      mGPUChild->SendSimulateDeviceReset();
     }
-    OnRemoteProcessDeviceReset(mProcess);
   } else {
-    OnInProcessDeviceReset(/* aTrackThreshold */ false);
+    wr::RenderThread::Get()->SimulateDeviceReset();
   }
 }
 
@@ -539,9 +544,12 @@ bool GPUProcessManager::DisableWebRenderConfig(wr::WebRenderError aError,
         gfx::FeatureStatus::Unavailable, "Failed to render WebRender",
         "FEATURE_FAILURE_WEBRENDER_RENDER"_ns);
   } else if (aError == wr::WebRenderError::NEW_SURFACE) {
+    // If we cannot create a new Surface even in the final fallback
+    // configuration then force a crash.
     wantRestart = gfxPlatform::FallbackFromAcceleration(
         gfx::FeatureStatus::Unavailable, "Failed to create new surface",
-        "FEATURE_FAILURE_WEBRENDER_NEW_SURFACE"_ns);
+        "FEATURE_FAILURE_WEBRENDER_NEW_SURFACE"_ns,
+        /* aCrashAfterFinalFallback */ true);
   } else if (aError == wr::WebRenderError::BEGIN_DRAW) {
     wantRestart = gfxPlatform::FallbackFromAcceleration(
         gfx::FeatureStatus::Unavailable, "BeginDraw() failed",
@@ -776,7 +784,7 @@ void GPUProcessManager::HandleProcessLost() {
   // until the app is in the foreground again.
   if (gfxConfig::IsEnabled(Feature::GPU_PROCESS)) {
     if (mAppInForeground) {
-      LaunchGPUProcess();
+      Unused << LaunchGPUProcess();
     }
   } else {
     // If the GPU process is disabled we can reinitialize rendering immediately.
@@ -898,7 +906,7 @@ already_AddRefed<CompositorSession> GPUProcessManager::CreateTopLevelCompositor(
     nsBaseWidget* aWidget, WebRenderLayerManager* aLayerManager,
     CSSToLayoutDeviceScale aScale, const CompositorOptions& aOptions,
     bool aUseExternalSurfaceSize, const gfx::IntSize& aSurfaceSize,
-    bool* aRetryOut) {
+    uint64_t aInnerWindowId, bool* aRetryOut) {
   MOZ_ASSERT(aRetryOut);
 
   LayersId layerTreeId = AllocateLayerTreeId();
@@ -908,9 +916,9 @@ already_AddRefed<CompositorSession> GPUProcessManager::CreateTopLevelCompositor(
   RefPtr<CompositorSession> session;
 
   if (EnsureGPUReady()) {
-    session =
-        CreateRemoteSession(aWidget, aLayerManager, layerTreeId, aScale,
-                            aOptions, aUseExternalSurfaceSize, aSurfaceSize);
+    session = CreateRemoteSession(aWidget, aLayerManager, layerTreeId, aScale,
+                                  aOptions, aUseExternalSurfaceSize,
+                                  aSurfaceSize, aInnerWindowId);
     if (!session) {
       // We couldn't create a remote compositor, so abort the process.
       DisableGPUProcess("Failed to create remote compositor");
@@ -920,7 +928,8 @@ already_AddRefed<CompositorSession> GPUProcessManager::CreateTopLevelCompositor(
   } else {
     session = InProcessCompositorSession::Create(
         aWidget, aLayerManager, layerTreeId, aScale, aOptions,
-        aUseExternalSurfaceSize, aSurfaceSize, AllocateNamespace());
+        aUseExternalSurfaceSize, aSurfaceSize, AllocateNamespace(),
+        aInnerWindowId);
   }
 
 #if defined(MOZ_WIDGET_ANDROID)
@@ -940,7 +949,7 @@ RefPtr<CompositorSession> GPUProcessManager::CreateRemoteSession(
     nsBaseWidget* aWidget, WebRenderLayerManager* aLayerManager,
     const LayersId& aRootLayerTreeId, CSSToLayoutDeviceScale aScale,
     const CompositorOptions& aOptions, bool aUseExternalSurfaceSize,
-    const gfx::IntSize& aSurfaceSize) {
+    const gfx::IntSize& aSurfaceSize, uint64_t aInnerWindowId) {
 #ifdef MOZ_WIDGET_SUPPORTS_OOP_COMPOSITING
   widget::CompositorWidgetInitData initData;
   aWidget->GetCompositorWidgetInitData(&initData);
@@ -948,7 +957,7 @@ RefPtr<CompositorSession> GPUProcessManager::CreateRemoteSession(
   RefPtr<CompositorBridgeChild> child =
       CompositorManagerChild::CreateWidgetCompositorBridge(
           mProcessToken, aLayerManager, AllocateNamespace(), aScale, aOptions,
-          aUseExternalSurfaceSize, aSurfaceSize);
+          aUseExternalSurfaceSize, aSurfaceSize, aInnerWindowId);
   if (!child) {
     gfxCriticalNote << "Failed to create CompositorBridgeChild";
     return nullptr;

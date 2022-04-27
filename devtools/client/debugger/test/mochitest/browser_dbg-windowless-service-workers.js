@@ -4,6 +4,9 @@
 
 // Test that we can detect a new service worker and hit breakpoints that we've
 // set in it.
+
+"use strict";
+
 add_task(async function() {
   info("Subtest #1");
   await pushPref("devtools.debugger.features.windowless-service-workers", true);
@@ -84,7 +87,7 @@ add_task(async function() {
   await gBrowser.selectTabAtIndex(gBrowser.tabs.indexOf(firstTab));
   await checkWorkerThreads(dbg, 2);
 
-  const sources = await waitUntilPredicate(() => {
+  const sources = await waitFor(() => {
     const list = dbg.selectors
       .getSourceList()
       .filter(s => s.url.includes("service-worker.sjs"));

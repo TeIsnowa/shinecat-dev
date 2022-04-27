@@ -44,14 +44,11 @@ namespace jit {
   _(IsGenClosing)                        \
   _(Resume)                              \
   /* try-finally */                      \
-  _(Finally)                             \
-  _(Gosub)                               \
   _(Retsub)                              \
   /* Misc */                             \
   _(DelName)                             \
   _(SetIntrinsic)                        \
   /* Private Fields */                   \
-  _(InitLockedElem)                      \
   _(GetAliasedDebugVar)                  \
   /* Non-syntactic scope */              \
   _(NonSyntacticGlobalThis)              \

@@ -1399,13 +1399,13 @@ void CodeGenerator::visitUnbox(LUnbox* unbox) {
 }
 
 void CodeGenerator::visitDouble(LDouble* ins) {
-  ARMFPRegister output(ToFloatRegister(ins->getDef(0)), 64);
-  masm.Fmov(output, ins->value());
+  const LDefinition* out = ins->getDef(0);
+  masm.loadConstantDouble(ins->value(), ToFloatRegister(out));
 }
 
 void CodeGenerator::visitFloat32(LFloat32* ins) {
-  ARMFPRegister output(ToFloatRegister(ins->getDef(0)), 32);
-  masm.Fmov(output, ins->value());
+  const LDefinition* out = ins->getDef(0);
+  masm.loadConstantFloat32(ins->value(), ToFloatRegister(out));
 }
 
 void CodeGenerator::visitTestDAndBranch(LTestDAndBranch* test) {
@@ -2525,7 +2525,14 @@ void CodeGenerator::visitWasmCompareAndSelect(LWasmCompareAndSelect* ins) {
   }
 
   // Act on flag.
-  Assembler::Condition cond = JSOpToCondition(ins->compareType(), ins->jsop());
+  Assembler::Condition cond;
+  if (compTy == MCompare::Compare_Float32 ||
+      compTy == MCompare::Compare_Double) {
+    cond = Assembler::ConditionFromDoubleCondition(
+        JSOpToDoubleCondition(ins->jsop()));
+  } else {
+    cond = JSOpToCondition(compTy, ins->jsop());
+  }
   MIRType insTy = ins->mir()->type();
   if (insTy == MIRType::Int32 || insTy == MIRType::Int64) {
     Register destReg = ToRegister(ins->output());
@@ -2585,11 +2592,10 @@ void CodeGenerator::visitWasmAddOffset(LWasmAddOffset* lir) {
 
   masm.Adds(ARMRegister(out, 32), ARMRegister(base, 32),
             Operand(mir->offset()));
-
-  Label ok;
-  masm.j(Assembler::CarryClear, &ok);
-  masm.wasmTrap(wasm::Trap::OutOfBounds, mir->bytecodeOffset());
-  masm.bind(&ok);
+  OutOfLineAbortingWasmTrap* ool = new (alloc())
+      OutOfLineAbortingWasmTrap(mir->bytecodeOffset(), wasm::Trap::OutOfBounds);
+  addOutOfLineCode(ool, mir);
+  masm.j(Assembler::CarrySet, ool->entry());
 }
 
 void CodeGenerator::visitWasmAddOffset64(LWasmAddOffset64* lir) {
@@ -2599,11 +2605,10 @@ void CodeGenerator::visitWasmAddOffset64(LWasmAddOffset64* lir) {
 
   masm.Adds(ARMRegister(out.reg, 64), ARMRegister(base.reg, 64),
             Operand(mir->offset()));
-
-  Label ok;
-  masm.j(Assembler::CarryClear, &ok);
-  masm.wasmTrap(wasm::Trap::OutOfBounds, mir->bytecodeOffset());
-  masm.bind(&ok);
+  OutOfLineAbortingWasmTrap* ool = new (alloc())
+      OutOfLineAbortingWasmTrap(mir->bytecodeOffset(), wasm::Trap::OutOfBounds);
+  addOutOfLineCode(ool, mir);
+  masm.j(Assembler::CarrySet, ool->entry());
 }
 
 void CodeGenerator::visitWasmSelectI64(LWasmSelectI64* lir) {
@@ -3042,10 +3047,10 @@ void CodeGenerator::visitWasmTernarySimd128(LWasmTernarySimd128* ins) {
       masm.fmsFloat64x2(ToFloatRegister(ins->v1()), ToFloatRegister(ins->v2()),
                         ToFloatRegister(ins->v0()));
       break;
-    case wasm::SimdOp::I8x16LaneSelect:
-    case wasm::SimdOp::I16x8LaneSelect:
-    case wasm::SimdOp::I32x4LaneSelect:
-    case wasm::SimdOp::I64x2LaneSelect: {
+    case wasm::SimdOp::I8x16RelaxedLaneSelect:
+    case wasm::SimdOp::I16x8RelaxedLaneSelect:
+    case wasm::SimdOp::I32x4RelaxedLaneSelect:
+    case wasm::SimdOp::I64x2RelaxedLaneSelect: {
       FloatRegister lhs = ToFloatRegister(ins->v0());
       FloatRegister rhs = ToFloatRegister(ins->v1());
       FloatRegister maskDest = ToFloatRegister(ins->v2());
@@ -3220,7 +3225,7 @@ void CodeGenerator::visitWasmBinarySimd128(LWasmBinarySimd128* ins) {
     case wasm::SimdOp::I8x16Swizzle:
       masm.swizzleInt8x16(lhs, rhs, dest);
       break;
-    case wasm::SimdOp::V8x16RelaxedSwizzle:
+    case wasm::SimdOp::I8x16RelaxedSwizzle:
       masm.swizzleInt8x16Relaxed(lhs, rhs, dest);
       break;
     case wasm::SimdOp::I8x16NarrowI16x8S:
@@ -3444,6 +3449,9 @@ void CodeGenerator::visitWasmBinarySimd128(LWasmBinarySimd128* ins) {
       break;
     case wasm::SimdOp::F64x2RelaxedMax:
       masm.maxFloat64x2Relaxed(lhs, rhs, dest);
+      break;
+    case wasm::SimdOp::I16x8RelaxedQ15MulrS:
+      masm.q15MulrInt16x8Relaxed(lhs, rhs, dest);
       break;
     default:
       MOZ_CRASH("Binary SimdOp not implemented");

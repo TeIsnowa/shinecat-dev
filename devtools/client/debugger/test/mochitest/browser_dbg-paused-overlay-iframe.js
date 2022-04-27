@@ -4,6 +4,8 @@
 
 // Tests the paused overlay in a remote frame
 
+"use strict";
+
 const TEST_COM_URI = `${URL_ROOT_COM_SSL}examples/doc_dbg-fission-frame-sources.html`;
 
 add_task(async function() {
@@ -30,7 +32,7 @@ add_task(async function() {
       return content.wrappedJSObject.foo();
     });
   });
-  await waitFor(() => isPaused(dbg), "Wait for the debugger to pause");
+  await waitForPaused(dbg);
   ok(true, "debugger is paused");
 
   let highlighterTestFront;
@@ -55,15 +57,14 @@ add_task(async function() {
     getSelectedSource().url.includes("simple2.js"),
     "Selected source is simple2.js"
   );
-  assertPausedLocation(dbg);
-  assertDebugLine(dbg, 5);
+  assertPausedAtSourceAndLine(dbg, findSource(dbg, "simple2.js").id, 5);
 
   info("Test clicking the resume button");
   await highlighterTestFront.clickPausedDebuggerOverlayButton(
     "paused-dbg-resume-button"
   );
 
-  await waitFor(() => !isPaused(dbg), "Wait for the debugger to resume");
+  await waitForResumed(dbg);
   ok("The debugger isn't paused after clicking on the resume button");
 
   await waitFor(async () => {

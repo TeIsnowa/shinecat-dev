@@ -13,6 +13,12 @@ ChromeUtils.defineModuleGetter(
   "resource://gre/modules/AppConstants.jsm"
 );
 
+ChromeUtils.defineModuleGetter(
+  this,
+  "WindowsVersionInfo",
+  "resource://gre/modules/components-utils/WindowsVersionInfo.jsm"
+);
+
 let expectedResults;
 
 let osVersion = Services.sysinfo.get("version");
@@ -66,14 +72,17 @@ const SPOOFED_PLATFORM = {
   other: "Linux x86_64",
 };
 
-// If comparison with this value fails in the future,
-// it's time to evaluate if exposing a new Windows
-// version to the Web is appropriate. See
+// If comparison with the WindowsOscpu value fails in the future, it's time to
+// evaluate if exposing a new Windows version to the Web is appropriate. See
 // https://bugzilla.mozilla.org/show_bug.cgi?id=1693295
-const WindowsOscpu =
-  cpuArch == "x86_64"
-    ? `Windows NT ${osVersion}; Win64; x64`
-    : `Windows NT ${osVersion}`;
+let WindowsOscpu = null;
+if (AppConstants.platform == "win") {
+  let isWin11 = WindowsVersionInfo.get().buildNumber >= 22000;
+  WindowsOscpu =
+    cpuArch == "x86_64" || (cpuArch == "aarch64" && isWin11)
+      ? `Windows NT ${osVersion}; Win64; x64`
+      : `Windows NT ${osVersion}`;
+}
 
 const DEFAULT_OSCPU = {
   linux: `Linux ${cpuArch}`,
@@ -378,10 +387,10 @@ add_task(async function setupResistFingerprinting() {
     testDesc: "spoofed",
     appVersion: SPOOFED_APPVERSION[AppConstants.platform],
     hardwareConcurrency: SPOOFED_HW_CONCURRENCY,
-    mimeTypesLength: 0,
+    mimeTypesLength: 2,
     oscpu: SPOOFED_OSCPU[AppConstants.platform],
     platform: SPOOFED_PLATFORM[AppConstants.platform],
-    pluginsLength: 0,
+    pluginsLength: 5,
     userAgentNavigator: spoofedUserAgentNavigator,
     userAgentHeader: spoofedUserAgentHeader,
   };
@@ -417,88 +426,3 @@ add_task(async function runOverrideTest() {
   // Pop privacy.resistFingerprinting
   await SpecialPowers.popPrefEnv();
 });
-
-const VERSION_100_UA_OS = {
-  linux: "X11; Linux x86_64",
-  win: cpuArch == "x86_64" ? "Windows NT 10.0; Win64; x64" : "Windows NT 10.0",
-  macosx: "Macintosh; Intel Mac OS X 10.15",
-  android: "Android 10; Mobile",
-};
-
-const VERSION_100_UA = `Mozilla/5.0 (${
-  VERSION_100_UA_OS[AppConstants.platform]
-}; rv:100.0) Gecko/20100101 Firefox/100.0`;
-
-// Only test the Firefox and Gecko experiment prefs on desktop.
-if (AppConstants.platform != "android") {
-  add_task(async function testForceVersion100() {
-    await SpecialPowers.pushPrefEnv({
-      set: [["general.useragent.forceVersion100", true]],
-    });
-
-    expectedResults = {
-      testDesc: "forceVersion100",
-      appVersion: DEFAULT_APPVERSION[AppConstants.platform],
-      hardwareConcurrency: navigator.hardwareConcurrency,
-      mimeTypesLength: 2,
-      oscpu: DEFAULT_OSCPU[AppConstants.platform],
-      platform: DEFAULT_PLATFORM[AppConstants.platform],
-      pluginsLength: 5,
-      userAgentNavigator: VERSION_100_UA,
-      userAgentHeader: VERSION_100_UA,
-    };
-
-    await testNavigator();
-
-    await testUserAgentHeader();
-
-    await testWorkerNavigator();
-
-    // Pop general.useragent.override etc
-    await SpecialPowers.popPrefEnv();
-  });
-
-  add_task(async function setupFirefoxVersionExperiment() {
-    // In Test Verify mode, this test is run multiple times so we need to
-    // reset the experiment enrollment prefs as if experiment enrollment
-    // never happend.
-    await SpecialPowers.pushPrefEnv({
-      set: [
-        ["general.useragent.forceVersion100", false],
-        ["general.useragent.handledVersionExperimentEnrollment", false],
-      ],
-    });
-
-    // Mock Nimbus experiment settings
-    const { ExperimentFakes } = ChromeUtils.import(
-      "resource://testing-common/NimbusTestUtils.jsm"
-    );
-    let doExperimentCleanup = await ExperimentFakes.enrollWithFeatureConfig({
-      featureId: "firefox100",
-      value: { firefoxVersion: 100 },
-    });
-
-    expectedResults = {
-      testDesc: "FirefoxVersionExperimentTest",
-      appVersion: DEFAULT_APPVERSION[AppConstants.platform],
-      hardwareConcurrency: navigator.hardwareConcurrency,
-      mimeTypesLength: 2,
-      oscpu: DEFAULT_OSCPU[AppConstants.platform],
-      platform: DEFAULT_PLATFORM[AppConstants.platform],
-      pluginsLength: 5,
-      userAgentNavigator: VERSION_100_UA,
-      userAgentHeader: VERSION_100_UA,
-    };
-
-    await testNavigator();
-
-    // Skip worker tests due to intermittent bug 1713764. This is unlikely to be
-    // a scenario that affects users enrolled in our "Firefox 100" experiment.
-    // await testWorkerNavigator();
-
-    await testUserAgentHeader();
-
-    // Clear Nimbus experiment prefs and session data
-    await doExperimentCleanup();
-  });
-}

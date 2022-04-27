@@ -1,12 +1,12 @@
 cask "safari-technology-preview" do
   if MacOS.version == :monterey
-    version "138,002-53074-20220120-2EE93579-3CD2-412B-A423-AF28E0B94E23"
+    version "143,002-86658-20220407-A2BE5BCC-1B72-4CA4-B24F-6E442EEDF14A"
     url "https://secure-appldnld.apple.com/STP/#{version.after_comma}/SafariTechnologyPreview.dmg"
-    sha256 "14c96db851602d38f27496afa898328d526e483995e53c047c4f710cead28faf"
+    sha256 "894a86bcbcb08b04177a1606138a5f27cecf9276fe2dd7c9f15af34a6ba9cb1c"
   elsif MacOS.version == :big_sur
-    version "138,002-53460-20220120-34CD386B-BA62-47FB-83C2-588954B76959"
+    version "143,002-86656-20220407-CC5B940B-17D8-47CA-8EEF-5B2ECA3240B0"
     url "https://secure-appldnld.apple.com/STP/#{version.after_comma}/SafariTechnologyPreview.dmg"
-    sha256 "19c30fcf5519afc1e2de01f5d340789aef469c7b1176e895f923b97c71073618"
+    sha256 "b86bbbe2d692e5b5adf87949e12add27dc50f20615739339f77383756a4d2707"
   end
 
   appcast "https://developer.apple.com/safari/download/"

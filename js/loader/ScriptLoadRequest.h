@@ -14,8 +14,8 @@
 #include "mozilla/Atomics.h"
 #include "mozilla/Assertions.h"
 #include "mozilla/CORSMode.h"
-#include "mozilla/dom/ScriptLoadContext.h"
 #include "mozilla/dom/SRIMetadata.h"
+#include "mozilla/dom/ReferrerPolicyBinding.h"
 #include "mozilla/LinkedList.h"
 #include "mozilla/Maybe.h"
 #include "mozilla/MaybeOneOf.h"
@@ -28,6 +28,7 @@
 #include "nsCycleCollectionParticipant.h"
 #include "nsIGlobalObject.h"
 #include "ScriptKind.h"
+#include "nsIScriptElement.h"
 
 class nsICacheInfoChannel;
 
@@ -44,6 +45,7 @@ namespace loader {
 
 using Utf8Unit = mozilla::Utf8Unit;
 
+class LoadContextBase;
 class ModuleLoadRequest;
 class ScriptLoadRequestList;
 
@@ -53,10 +55,16 @@ class ScriptLoadRequestList;
  * with the exception of the following properties:
  *   cryptographic nonce
  *      The cryptographic nonce metadata used for the initial fetch and for
- *      fetching any imported modules. This is handled by the principal.
+ *      fetching any imported modules. As this is populated by a DOM element,
+ *      this is implemented via mozilla::dom::Element as the field
+ *      mElement. The default value is an empty string, and is indicated
+ *      when this field is a nullptr. Nonce is not represented on the dom
+ *      side as per bug 1374612.
  *   parser metadata
  *      The parser metadata used for the initial fetch and for fetching any
- *      imported modules. This is not implemented.
+ *      imported modules. This is populated from a mozilla::dom::Element and is
+ *      handled by the field mElement. The default value is an empty string,
+ *      and is indicated when this field is a nullptr.
  *   integrity metadata
  *      The integrity metadata used for the initial fetch. This is
  *      implemented in ScriptLoadRequest, as it changes for every
@@ -78,7 +86,7 @@ class ScriptFetchOptions {
   ScriptFetchOptions(mozilla::CORSMode aCORSMode,
                      enum mozilla::dom::ReferrerPolicy aReferrerPolicy,
                      nsIPrincipal* aTriggeringPrincipal,
-                     nsIGlobalObject* aWebExtGlobal = nullptr);
+                     mozilla::dom::Element* aElement = nullptr);
 
   /*
    *  The credentials mode used for the initial fetch (for module scripts)
@@ -94,15 +102,16 @@ class ScriptFetchOptions {
   const enum mozilla::dom::ReferrerPolicy mReferrerPolicy;
 
   /*
-   *  Related to cryptographic nonce, used to determine CSP
+   *  Used to determine CSP
    */
   nsCOMPtr<nsIPrincipal> mTriggeringPrincipal;
-
-  /* The Web Extension global -- Only used on DOM Modules.
-   *     Specifies a SandBox global with which to associate and run this script.
-   *     Propagated throughout the module tree if present. Not part of a spec.
+  /*
+   *      Represents fields populated by DOM elements (nonce, parser metadata)
+   *      Leave this field as a nullptr for any fetch that requires the
+   *      default classic script options.
+   *      (https://html.spec.whatwg.org/multipage/webappapis.html#default-classic-script-fetch-options)
    */
-  nsCOMPtr<nsIGlobalObject> mWebExtGlobal;
+  nsCOMPtr<mozilla::dom::Element> mElement;
 };
 
 /*
@@ -151,7 +160,7 @@ class ScriptLoadRequest
   ScriptLoadRequest(ScriptKind aKind, nsIURI* aURI,
                     ScriptFetchOptions* aFetchOptions,
                     const SRIMetadata& aIntegrity, nsIURI* aReferrer,
-                    mozilla::dom::ScriptLoadContext* aContext);
+                    LoadContextBase* aContext);
 
   NS_DECL_CYCLE_COLLECTING_ISUPPORTS
   NS_DECL_CYCLE_COLLECTION_SCRIPT_HOLDER_CLASS(ScriptLoadRequest)
@@ -174,34 +183,31 @@ class ScriptLoadRequest
   bool IsModuleRequest() const { return mKind == ScriptKind::eModule; }
 
   ModuleLoadRequest* AsModuleRequest();
+  const ModuleLoadRequest* AsModuleRequest() const;
 
   virtual bool IsTopLevel() const { return true; };
 
   virtual void Cancel();
 
-  bool IsCanceled() const { return mIsCanceled; }
-
   virtual void SetReady();
 
-  enum class Progress : uint8_t {
-    eLoading,         // Request either source or bytecode
-    eLoading_Source,  // Explicitly Request source stream
-    eCompiling,
-    eFetchingImports,
-    eReady
+  enum class State : uint8_t {
+    Fetching,
+    Compiling,
+    LoadingImports,
+    Ready,
+    Canceled
   };
 
-  bool IsReadyToRun() const { return mProgress == Progress::eReady; }
-  bool IsLoading() const {
-    return mProgress == Progress::eLoading ||
-           mProgress == Progress::eLoading_Source;
+  bool IsFetching() const { return mState == State::Fetching; }
+
+  bool IsCompiling() const { return mState == State::Compiling; }
+
+  bool IsReadyToRun() const {
+    return mState == State::Ready || mState == State::Canceled;
   }
 
-  bool IsLoadingSource() const {
-    return mProgress == Progress::eLoading_Source;
-  }
-
-  bool InCompilingStage() const { return mProgress == Progress::eCompiling; }
+  bool IsCanceled() const { return mState == State::Canceled; }
 
   // Type of data provided by the nsChannel.
   enum class DataType : uint8_t { eUnknown, eTextSource, eBytecode };
@@ -275,7 +281,9 @@ class ScriptLoadRequest
 
   void ClearScriptSource();
 
-  void SetScript(JSScript* aScript);
+  void MarkForBytecodeEncoding(JSScript* aScript);
+
+  bool IsMarkedForBytecodeEncoding() const;
 
   bool IsBytecode() const { return mDataType == DataType::eBytecode; }
 
@@ -287,17 +295,14 @@ class ScriptLoadRequest
 
   bool HasLoadContext() { return mLoadContext; }
 
-  mozilla::dom::ScriptLoadContext* GetLoadContext() {
-    MOZ_ASSERT(mLoadContext);
-    return mLoadContext;
-  }
+  mozilla::dom::ScriptLoadContext* GetScriptLoadContext();
 
   const ScriptKind mKind;  // Whether this is a classic script or a module
                            // script.
 
-  bool mIsCanceled;    // True if we have been explicitly canceled.
-  Progress mProgress;  // Are we still waiting for a load to complete?
-  DataType mDataType;  // Does this contain Source or Bytecode?
+  State mState;           // Are we still waiting for a load to complete?
+  bool mFetchSourceOnly;  // Request source, not cached bytecode.
+  DataType mDataType;     // Does this contain Source or Bytecode?
   RefPtr<ScriptFetchOptions> mFetchOptions;
   const SRIMetadata mIntegrity;
   const nsCOMPtr<nsIURI> mReferrer;
@@ -328,15 +333,18 @@ class ScriptLoadRequest
 
   // Holds the top-level JSScript that corresponds to the current source, once
   // it is parsed, and planned to be saved in the bytecode cache.
-  JS::Heap<JSScript*> mScript;
+  //
+  // NOTE: This field is not used for ModuleLoadRequest.
+  //       See ModuleLoadRequest::mIsMarkedForBytecodeEncoding.
+  JS::Heap<JSScript*> mScriptForBytecodeEncoding;
 
   // Holds the Cache information, which is used to register the bytecode
   // on the cache entry, such that we can load it the next time.
   nsCOMPtr<nsICacheInfoChannel> mCacheInfo;
 
-  // ScriptLoadContext for augmenting the load depending on the loading
+  // LoadContext for augmenting the load depending on the loading
   // context (DOM, Worker, etc.)
-  RefPtr<mozilla::dom::ScriptLoadContext> mLoadContext;
+  RefPtr<LoadContextBase> mLoadContext;
 };
 
 class ScriptLoadRequestList : private mozilla::LinkedList<ScriptLoadRequest> {

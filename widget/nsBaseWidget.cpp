@@ -132,12 +132,14 @@ NS_IMPL_ISUPPORTS(nsBaseWidget, nsIWidget, nsISupportsWeakReference)
 //
 //-------------------------------------------------------------------------
 
-nsBaseWidget::nsBaseWidget()
+nsBaseWidget::nsBaseWidget() : nsBaseWidget(eBorderStyle_none) {}
+
+nsBaseWidget::nsBaseWidget(nsBorderStyle aBorderStyle)
     : mWidgetListener(nullptr),
       mAttachedWidgetListener(nullptr),
       mPreviouslyAttachedWidgetListener(nullptr),
       mCompositorVsyncDispatcher(nullptr),
-      mBorderStyle(eBorderStyle_none),
+      mBorderStyle(aBorderStyle),
       mBounds(0, 0, 0, 0),
       mOriginalBounds(nullptr),
       mSizeMode(nsSizeMode_Normal),
@@ -151,6 +153,7 @@ nsBaseWidget::nsBaseWidget()
       mIMEHasFocus(false),
       mIMEHasQuit(false),
       mIsFullyOccluded(false),
+      mNeedFastSnaphot(false),
       mCurrentPanGestureBelongsToSwipe(false) {
 #ifdef NOISY_WIDGET_LEAKS
   gNumWidgets++;
@@ -476,6 +479,10 @@ already_AddRefed<nsIWidget> nsBaseWidget::CreateChild(
     widget = AllocateChildPopupWidget();
   } else {
     widget = nsIWidget::CreateChildWindow();
+  }
+
+  if (widget && mNeedFastSnaphot) {
+    widget->SetNeedFastSnaphot();
   }
 
   if (widget &&
@@ -1203,6 +1210,9 @@ already_AddRefed<WebRenderLayerManager> nsBaseWidget::CreateCompositorSession(
       options.SetAllowSoftwareWebRenderD3D11(
           gfx::gfxVars::AllowSoftwareWebRenderD3D11());
     }
+    if (mNeedFastSnaphot) {
+      options.SetNeedFastSnaphot(true);
+    }
 #elif defined(MOZ_WIDGET_ANDROID)
     MOZ_ASSERT(supportsAcceleration);
     options.SetAllowSoftwareWebRenderOGL(
@@ -1213,8 +1223,6 @@ already_AddRefed<WebRenderLayerManager> nsBaseWidget::CreateCompositorSession(
           StaticPrefs::gfx_webrender_software_opengl_AtStartup());
     }
 #endif
-
-    options.SetUseWebGPU(StaticPrefs::dom_webgpu_enabled());
 
 #ifdef MOZ_WIDGET_ANDROID
     // Unconditionally set the compositor as initially paused, as we have not
@@ -1228,10 +1236,15 @@ already_AddRefed<WebRenderLayerManager> nsBaseWidget::CreateCompositorSession(
 
     RefPtr<WebRenderLayerManager> lm = new WebRenderLayerManager(this);
 
+    uint64_t innerWindowId = 0;
+    if (Document* doc = GetDocument()) {
+      innerWindowId = doc->InnerWindowID();
+    }
+
     bool retry = false;
     mCompositorSession = gpu->CreateTopLevelCompositor(
         this, lm, GetDefaultScale(), options, UseExternalCompositingSurface(),
-        gfx::IntSize(aWidth, aHeight), &retry);
+        gfx::IntSize(aWidth, aHeight), innerWindowId, &retry);
 
     if (mCompositorSession) {
       TextureFactoryIdentifier textureFactoryIdentifier;
@@ -1377,6 +1390,18 @@ void nsBaseWidget::ClearCachedWebrenderResources() {
     return;
   }
   mWindowRenderer->AsWebRender()->ClearCachedResources();
+}
+
+bool nsBaseWidget::SetNeedFastSnaphot() {
+  MOZ_ASSERT(XRE_IsParentProcess());
+  MOZ_ASSERT(!mCompositorSession);
+
+  if (!XRE_IsParentProcess() || mCompositorSession) {
+    return false;
+  }
+
+  mNeedFastSnaphot = true;
+  return true;
 }
 
 already_AddRefed<gfx::DrawTarget> nsBaseWidget::StartRemoteDrawing() {

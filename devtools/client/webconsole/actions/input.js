@@ -111,7 +111,7 @@ function evaluateExpression(expression, from = "input") {
 
     const response = await commands.scriptCommand
       .execute(expression, {
-        frameActor: webConsoleUI.getFrameActor(),
+        frameActor: hud.getSelectedFrameActorID(),
         selectedNodeActor: webConsoleUI.getSelectedNodeActorID(),
         selectedTargetFront: toolbox && toolbox.getSelectedTargetFront(),
         mapped,
@@ -272,6 +272,7 @@ function handleHelperResult(response) {
                   message: {
                     level: message.level || "log",
                     arguments: [message.text],
+                    chromeContext: true,
                   },
                   resourceType: ResourceCommand.TYPES.CONSOLE_MESSAGE,
                 }))
@@ -414,7 +415,7 @@ function terminalInputChanged(expression, force = false) {
     ({ expression, mapped } = await getMappedExpression(hud, expression));
 
     const response = await commands.scriptCommand.execute(expression, {
-      frameActor: await webConsoleUI.getFrameActor(),
+      frameActor: hud.getSelectedFrameActorID(),
       selectedNodeActor: webConsoleUI.getSelectedNodeActorID(),
       selectedTargetFront: toolbox && toolbox.getSelectedTargetFront(),
       mapped,

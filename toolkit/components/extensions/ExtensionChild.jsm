@@ -160,13 +160,14 @@ Services.obs.addObserver(StrongPromise, "extensions-onMessage-witness");
 // Simple single-event emitter-like helper, exposes the EventManager api.
 class SimpleEventAPI extends EventManager {
   constructor(context, name) {
-    super({ context, name });
-    this.fires = new Set();
-    this.register = fire => {
-      this.fires.add(fire);
+    let fires = new Set();
+    let register = fire => {
+      fires.add(fire);
       fire.location = context.getCaller();
-      return () => this.fires.delete(fire);
+      return () => fires.delete(fire);
     };
+    super({ context, name, register });
+    this.fires = fires;
   }
   emit(...args) {
     return [...this.fires].map(fire => fire.asyncWithoutClone(...args));
@@ -385,7 +386,14 @@ class BrowserExtensionContent extends EventEmitter {
     this.optionalPermissions = policy.optionalPermissions;
 
     if (WebExtensionPolicy.isExtensionProcess) {
-      Object.assign(this, this.getSharedData("extendedData"));
+      // Keep in sync with serializeExtended in Extension.jsm
+      let ed = this.getSharedData("extendedData");
+      this.backgroundScripts = ed.backgroundScripts;
+      this.backgroundWorkerScript = ed.backgroundWorkerScript;
+      this.childModules = ed.childModules;
+      this.dependencies = ed.dependencies;
+      this.persistentBackground = ed.persistentBackground;
+      this.schemaURLs = ed.schemaURLs;
     }
 
     this.MESSAGE_EMIT_EVENT = `Extension:EmitEvent:${this.instanceId}`;
@@ -616,9 +624,11 @@ class ProxyAPIImplementation extends SchemaAPIInterface {
   }
 
   callAsyncFunction(args, callback, requireUserInput) {
+    const context = this.childApiManager.context;
+    const isHandlingUserInput =
+      context.contentWindow?.windowUtils?.isHandlingUserInput;
     if (requireUserInput) {
-      let context = this.childApiManager.context;
-      if (!context.contentWindow.windowUtils.isHandlingUserInput) {
+      if (!isHandlingUserInput) {
         let err = new context.cloneScope.Error(
           `${this.path} may only be called from a user input handler`
         );
@@ -629,7 +639,10 @@ class ProxyAPIImplementation extends SchemaAPIInterface {
       this.path,
       args,
       callback,
-      { alreadyLogged: this.alreadyLogged }
+      {
+        alreadyLogged: this.alreadyLogged,
+        isHandlingUserInput,
+      }
     );
   }
 
@@ -868,9 +881,14 @@ class ChildAPIManager {
     let deferred = PromiseUtils.defer();
     this.callPromises.set(callId, deferred);
 
-    // Any child api that calls into a parent function will have already
-    // logged the api_call.  Flag it so the parent doesn't log again.
-    let { alreadyLogged = true } = options;
+    let {
+      // Any child api that calls into a parent function will have already
+      // logged the api_call.  Flag it so the parent doesn't log again.
+      alreadyLogged = true,
+      // Propagating the isHAndlingUserInput flag to the API call handler
+      // executed on the parent process side.
+      isHandlingUserInput = false,
+    } = options;
 
     // TODO: conduit.queryAPICall()
     this.conduit.sendAPICall({
@@ -878,7 +896,7 @@ class ChildAPIManager {
       callId,
       path,
       args,
-      options: { alreadyLogged },
+      options: { alreadyLogged, isHandlingUserInput },
     });
     return this.context.wrapPromise(deferred.promise, callback);
   }

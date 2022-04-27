@@ -23,9 +23,10 @@ extern "C" NS_EXPORT void GIFFT_TimingDistributionStart(
     uint32_t aMetricId, mozilla::glean::TimerId aTimerId) {
   auto mirrorId = mozilla::glean::HistogramIdForMetric(aMetricId);
   if (mirrorId) {
-    auto lock = mozilla::glean::GetTimerIdToStartsLock();
-    (void)NS_WARN_IF(lock.ref()->Remove(aTimerId));
-    lock.ref()->InsertOrUpdate(aTimerId, mozilla::TimeStamp::Now());
+    mozilla::glean::GetTimerIdToStartsLock().apply([&](auto& lock) {
+      (void)NS_WARN_IF(lock.ref()->Remove(aTimerId));
+      lock.ref()->InsertOrUpdate(aTimerId, mozilla::TimeStamp::Now());
+    });
   }
 }
 
@@ -34,11 +35,21 @@ extern "C" NS_EXPORT void GIFFT_TimingDistributionStopAndAccumulate(
     uint32_t aMetricId, mozilla::glean::TimerId aTimerId) {
   auto mirrorId = mozilla::glean::HistogramIdForMetric(aMetricId);
   if (mirrorId) {
-    auto lock = mozilla::glean::GetTimerIdToStartsLock();
-    auto optStart = lock.ref()->Extract(aTimerId);
-    if (!NS_WARN_IF(!optStart)) {
-      AccumulateTimeDelta(mirrorId.extract(), optStart.extract());
-    }
+    mozilla::glean::GetTimerIdToStartsLock().apply([&](auto& lock) {
+      auto optStart = lock.ref()->Extract(aTimerId);
+      if (!NS_WARN_IF(!optStart)) {
+        AccumulateTimeDelta(mirrorId.extract(), optStart.extract());
+      }
+    });
+  }
+}
+
+// Called from within FOG's Rust impl.
+extern "C" NS_EXPORT void GIFFT_TimingDistributionAccumulateRawMillis(
+    uint32_t aMetricId, uint32_t aMS) {
+  auto mirrorId = mozilla::glean::HistogramIdForMetric(aMetricId);
+  if (mirrorId) {
+    Accumulate(mirrorId.extract(), aMS);
   }
 }
 
@@ -47,8 +58,8 @@ extern "C" NS_EXPORT void GIFFT_TimingDistributionCancel(
     uint32_t aMetricId, mozilla::glean::TimerId aTimerId) {
   auto mirrorId = mozilla::glean::HistogramIdForMetric(aMetricId);
   if (mirrorId) {
-    auto lock = mozilla::glean::GetTimerIdToStartsLock();
-    (void)NS_WARN_IF(!lock.ref()->Remove(aTimerId));
+    mozilla::glean::GetTimerIdToStartsLock().apply(
+        [&](auto& lock) { (void)NS_WARN_IF(!lock.ref()->Remove(aTimerId)); });
   }
 }
 
@@ -62,6 +73,14 @@ TimerId TimingDistributionMetric::Start() const {
 
 void TimingDistributionMetric::StopAndAccumulate(const TimerId&& aId) const {
   fog_timing_distribution_stop_and_accumulate(mId, aId);
+}
+
+// Intentionally not exposed to JS for lack of use case and a time duration
+// type.
+void TimingDistributionMetric::AccumulateRawDuration(
+    const TimeDuration& aDuration) const {
+  fog_timing_distribution_accumulate_raw_nanos(
+      mId, uint64_t(aDuration.ToMicroseconds() * 1000.00));
 }
 
 void TimingDistributionMetric::Cancel(const TimerId&& aId) const {
@@ -153,6 +172,12 @@ GleanTimingDistribution::TestGetValue(const nsACString& aPingName,
     }
     aResult.setObject(*root);
   }
+  return NS_OK;
+}
+
+NS_IMETHODIMP
+GleanTimingDistribution::TestAccumulateRawMillis(uint64_t aSample) {
+  mTimingDist.AccumulateRawDuration(TimeDuration::FromMilliseconds(aSample));
   return NS_OK;
 }
 

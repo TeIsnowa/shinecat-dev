@@ -245,12 +245,19 @@ static void moz_container_wayland_frame_callback_handler(
     // Protect mozcontainer internals changes by container_lock.
     MutexAutoLock lock(*wl_container->container_lock);
     g_clear_pointer(&wl_container->frame_callback_handler, wl_callback_destroy);
+    // It's possible that container is already unmapped so quit in such case.
+    if (!wl_container->surface) {
+      LOGWAYLAND("  container is unmapped, quit.");
+      if (!wl_container->initial_draw_cbs.empty()) {
+        NS_WARNING("Unmapping MozContainer with active draw callback!");
+        wl_container->initial_draw_cbs.clear();
+      }
+      return;
+    }
     if (wl_container->ready_to_draw) {
       return;
     }
     wl_container->ready_to_draw = true;
-    MOZ_DIAGNOSTIC_ASSERT(wl_container->surface,
-                          "Should have surface if we're ready to draw");
     cbs = std::move(wl_container->initial_draw_cbs);
   }
 
@@ -351,6 +358,10 @@ static gboolean moz_container_wayland_map_event(GtkWidget* widget,
 
   LOGWAYLAND("%s [%p]\n", __FUNCTION__,
              (void*)moz_container_get_nsWindow(MOZ_CONTAINER(widget)));
+
+  // We need to mark MozContainer as mapped to make sure
+  // moz_container_wayland_unmap() is called on hide/withdraw.
+  gtk_widget_set_mapped(widget, TRUE);
 
   // Don't create wl_subsurface in map_event when it's already created or
   // if we create it for the first time.
@@ -606,7 +617,8 @@ static bool moz_container_wayland_surface_create_locked(
   return true;
 }
 
-struct wl_surface* moz_container_wayland_surface_lock(MozContainer* container) {
+struct wl_surface* moz_container_wayland_surface_lock(MozContainer* container)
+    NO_THREAD_SAFETY_ANALYSIS {
   // LOGWAYLAND("%s [%p] surface %p ready_to_draw %d\n", __FUNCTION__,
   //           (void*)container, (void*)container->wl_container.surface,
   //           container->wl_container.ready_to_draw);
@@ -619,7 +631,8 @@ struct wl_surface* moz_container_wayland_surface_lock(MozContainer* container) {
 }
 
 void moz_container_wayland_surface_unlock(MozContainer* container,
-                                          struct wl_surface** surface) {
+                                          struct wl_surface** surface)
+    NO_THREAD_SAFETY_ANALYSIS {
   // Temporarily disabled to avoid log noise
   // LOGWAYLAND("%s [%p] surface %p\n", __FUNCTION__, (void*)container,
   //            (void*)container->wl_container.surface);
@@ -643,11 +656,13 @@ struct wl_surface* moz_container_wayland_get_surface_locked(
   return container->wl_container.surface;
 }
 
-void moz_container_wayland_lock(MozContainer* container) {
+void moz_container_wayland_lock(MozContainer* container)
+    NO_THREAD_SAFETY_ANALYSIS {
   container->wl_container.container_lock->Lock();
 }
 
-void moz_container_wayland_unlock(MozContainer* container) {
+void moz_container_wayland_unlock(MozContainer* container)
+    NO_THREAD_SAFETY_ANALYSIS {
   container->wl_container.container_lock->Unlock();
 }
 

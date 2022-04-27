@@ -33,6 +33,7 @@ class EventStateManager;
 
 namespace dom {
 
+class IPCDataTransfer;
 class DataTransferItem;
 class DataTransferItemList;
 class DOMStringList;
@@ -221,13 +222,6 @@ class DataTransfer final : public nsISupports, public nsWrapperCache {
    */
   already_AddRefed<FileList> GetFiles(nsIPrincipal& aSubjectPrincipal);
 
-  already_AddRefed<Promise> GetFilesAndDirectories(
-      nsIPrincipal& aSubjectPrincipal, mozilla::ErrorResult& aRv);
-
-  already_AddRefed<Promise> GetFiles(bool aRecursiveFlag,
-                                     nsIPrincipal& aSubjectPrincipal,
-                                     ErrorResult& aRv);
-
   void AddElement(Element& aElement, mozilla::ErrorResult& aRv);
 
   uint32_t MozItemCount() const;
@@ -400,6 +394,14 @@ class DataTransfer final : public nsISupports, public nsWrapperCache {
                                              nsTArray<nsCString>* aResult);
 
  protected:
+  // Non-text items are ignored.
+  //
+  // @param aHidden true, iff the data should be hidden from non-chrome code.
+  // @param aDataTransfer expected to be empty.
+  static void IPCDataTransferTextItemsToDataTransfer(
+      const IPCDataTransfer& aIpcDataTransfer, bool aHidden,
+      DataTransfer& aDataTransfer);
+
   // caches text and uri-list data formats that exist in the drag service or
   // clipboard for retrieval later.
   nsresult CacheExternalData(const char* aFormat, uint32_t aIndex,

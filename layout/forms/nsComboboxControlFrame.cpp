@@ -322,7 +322,8 @@ nscoord nsComboboxControlFrame::GetIntrinsicISize(gfxContext* aRenderingContext,
                                                   IntrinsicISizeType aType) {
   nscoord displayISize = mDisplayFrame->IntrinsicISizeOffsets().padding;
 
-  if (!StyleDisplay()->IsContainSize() && !StyleContent()->mContent.IsNone()) {
+  if (!StyleDisplay()->GetContainSizeAxes().mIContained &&
+      !StyleContent()->mContent.IsNone()) {
     // Compute the width of each option's (potentially text-transformed) text,
     // and use the widest one as part of our intrinsic size.
     nscoord maxOptionSize = 0;
@@ -357,14 +358,8 @@ nscoord nsComboboxControlFrame::GetIntrinsicISize(gfxContext* aRenderingContext,
     displayISize += maxOptionSize;
   }
 
-  // Add room for the dropmarker button (if there is one) and scrollbar on the
-  // popup.
+  // Add room for the dropmarker button (if there is one).
   displayISize += DropDownButtonISize();
-  nsPresContext* pc = PresContext();
-  if (!pc->UseOverlayScrollbars()) {
-    displayISize += nsIScrollableFrame::GetNondisappearingScrollbarWidth(
-        pc, GetWritingMode());
-  }
 
   return displayISize;
 }

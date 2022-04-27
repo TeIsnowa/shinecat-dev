@@ -11,6 +11,7 @@
 #include "ScriptLoadRequest.h"
 
 #include "js/TypeDecls.h"  // JS::MutableHandle, JS::Handle, JS::Root
+#include "js/Modules.h"
 #include "nsRefPtrHashtable.h"
 #include "nsCOMArray.h"
 #include "nsCOMPtr.h"
@@ -21,7 +22,6 @@
 #include "mozilla/dom/JSExecutionContext.h"
 #include "mozilla/MaybeOneOf.h"
 #include "mozilla/MozPromise.h"
-#include "ModuleMapKey.h"
 
 class nsIURI;
 
@@ -57,100 +57,235 @@ class ScriptLoaderInterface : public nsISupports {
   // In some environments, we will need to default to a base URI
   virtual nsIURI* GetBaseURI() const = 0;
 
-  // Get the global for the associated request.
-  virtual already_AddRefed<nsIGlobalObject> GetGlobalForRequest(
-      ScriptLoadRequest* aRequest) = 0;
-
   virtual void ReportErrorToConsole(ScriptLoadRequest* aRequest,
                                     nsresult aResult) const = 0;
 
   // Fill in CompileOptions, as well as produce the introducer script for
   // subsequent calls to UpdateDebuggerMetadata
   virtual nsresult FillCompileOptionsForRequest(
-      JSContext* cx, ScriptLoadRequest* aRequest,
-      JS::Handle<JSObject*> aScopeChain, JS::CompileOptions* aOptions,
+      JSContext* cx, ScriptLoadRequest* aRequest, JS::CompileOptions* aOptions,
       JS::MutableHandle<JSScript*> aIntroductionScript) = 0;
+
+  virtual void MaybePrepareModuleForBytecodeEncodingBeforeExecute(
+      JSContext* aCx, ModuleLoadRequest* aRequest) = 0;
+
+  virtual nsresult MaybePrepareModuleForBytecodeEncodingAfterExecute(
+      ModuleLoadRequest* aRequest, nsresult aRv) = 0;
+
+  virtual void MaybeTriggerBytecodeEncoding() = 0;
 };
 
+/*
+ * [DOMDOC] Module Loading
+ *
+ * ModuleLoaderBase provides support for loading module graphs as defined in the
+ * EcmaScript specification. A derived module loader class must be created for a
+ * specific use case (for example loading HTML module scripts). The derived
+ * class provides operations such as fetching of source code and scheduling of
+ * module execution.
+ *
+ * Module loading works in terms of 'requests' which hold data about modules as
+ * they move through the loading process. There may be more than one load
+ * request active for a single module URI, but the module is only loaded
+ * once. This is achieved by tracking all fetching and fetched modules in the
+ * module map.
+ *
+ * The module map is made up of two parts. A module that has been requested but
+ * has not yet loaded is represented by a promise in the mFetchingModules map. A
+ * module which has been loaded is represented by a ModuleScript in the
+ * mFetchedModules map.
+ *
+ * Module loading typically works as follows:
+ *
+ * 1.  The client ensures there is an instance of the derived module loader
+ *     class for its global or creates one if necessary.
+ *
+ * 2.  The client creates a ModuleLoadRequest object for the module to load and
+ *     calls the loader's StartModuleLoad() method. This is a top-level request,
+ *     i.e. not an import.
+ *
+ * 3.  The module loader calls the virtual method CanStartLoad() to check
+ *     whether the request should be loaded.
+ *
+ * 4.  If the module is not already present in the module map, the loader calls
+ *     the virtual method StartFetch() to set up an asynchronous operation to
+ *     fetch the module source.
+ *
+ * 5.  When the fetch operation is complete, the derived loader calls
+ *     OnFetchComplete() passing an error code to indicate success or failure.
+ *
+ * 6.  On success, the loader attempts to create a module script by calling the
+ *     virtual CompileFetchedModule() method.
+ *
+ * 7.  If compilation is successful, the loader creates load requests for any
+ *     imported modules if present. If so, the process repeats from step 3.
+ *
+ * 8.  When a load request is completed, the virtual OnModuleLoadComplete()
+ *     method is called. This is called for the top-level request and import
+ *     requests.
+ *
+ * 9.  The client calls InstantiateModuleGraph() for the top-level request. This
+ *     links the loaded module graph.
+ *
+ * 10. The client calls EvaluateModule() to execute the top-level module.
+ */
 class ModuleLoaderBase : public nsISupports {
  private:
   using GenericNonExclusivePromise = mozilla::GenericNonExclusivePromise;
   using GenericPromise = mozilla::GenericPromise;
+
   // Module map
-  nsRefPtrHashtable<ModuleMapKey, GenericNonExclusivePromise::Private>
+  nsRefPtrHashtable<nsURIHashKey, GenericNonExclusivePromise::Private>
       mFetchingModules;
-  nsRefPtrHashtable<ModuleMapKey, ModuleScript> mFetchedModules;
+  nsRefPtrHashtable<nsURIHashKey, ModuleScript> mFetchedModules;
+
+  // List of dynamic imports that are currently being loaded.
+  ScriptLoadRequestList mDynamicImportRequests;
+
+  nsCOMPtr<nsIGlobalObject> mGlobalObject;
 
  protected:
-  virtual ~ModuleLoaderBase();
   RefPtr<ScriptLoaderInterface> mLoader;
+
+  virtual ~ModuleLoaderBase();
 
  public:
   NS_DECL_CYCLE_COLLECTING_ISUPPORTS
   NS_DECL_CYCLE_COLLECTION_CLASS(ModuleLoaderBase)
-  explicit ModuleLoaderBase(ScriptLoaderInterface* aLoader);
+  explicit ModuleLoaderBase(ScriptLoaderInterface* aLoader,
+                            nsIGlobalObject* aGlobalObject);
 
+  using LoadedScript = JS::loader::LoadedScript;
   using ScriptFetchOptions = JS::loader::ScriptFetchOptions;
   using ScriptLoadRequest = JS::loader::ScriptLoadRequest;
   using ModuleLoadRequest = JS::loader::ModuleLoadRequest;
-  ScriptLoadRequestList mDynamicImportRequests;
 
   using MaybeSourceText =
       mozilla::MaybeOneOf<JS::SourceText<char16_t>, JS::SourceText<Utf8Unit>>;
 
-  // Methods that must be overwritten by an extending class
-  virtual void EnsureModuleHooksInitialized() {
-    MOZ_ASSERT(false, "You must override EnsureModuleHooksInitialized");
-  }
-  virtual nsresult StartModuleLoad(ScriptLoadRequest* aRequest) = 0;
-  virtual void ProcessLoadedModuleTree(ModuleLoadRequest* aRequest) = 0;
-  virtual nsresult CompileOrFinishModuleScript(
-      JSContext* aCx, JS::Handle<JSObject*> aGlobal,
-      JS::CompileOptions& aOptions, ModuleLoadRequest* aRequest,
-      JS::MutableHandle<JSObject*> aModuleScript) = 0;
+  // Methods that must be implemented by an extending class. These are called
+  // internally by ModuleLoaderBase.
 
+ private:
   // Create a module load request for a static module import.
   virtual already_AddRefed<ModuleLoadRequest> CreateStaticImport(
       nsIURI* aURI, ModuleLoadRequest* aParent) = 0;
 
-  // Helper function to set up the global correctly for dynamic imports.
-  nsresult EvaluateModule(ScriptLoadRequest* aRequest);
+  // Called by HostImportModuleDynamically hook.
+  virtual already_AddRefed<ModuleLoadRequest> CreateDynamicImport(
+      JSContext* aCx, nsIURI* aURI, LoadedScript* aMaybeActiveScript,
+      JS::Handle<JS::Value> aReferencingPrivate,
+      JS::Handle<JSString*> aSpecifier, JS::Handle<JSObject*> aPromise) = 0;
 
+  // Check whether we can load a module. May return false with |aRvOut| set to
+  // NS_OK to abort load without returning an error.
+  virtual bool CanStartLoad(ModuleLoadRequest* aRequest, nsresult* aRvOut) = 0;
+
+  // Start the process of fetching module source (or bytecode). This is only
+  // called if CanStartLoad returned true.
+  virtual nsresult StartFetch(ModuleLoadRequest* aRequest) = 0;
+
+  // Create a JS module for a fetched module request. This might compile source
+  // text or decode cached bytecode.
+  virtual nsresult CompileFetchedModule(
+      JSContext* aCx, JS::Handle<JSObject*> aGlobal,
+      JS::CompileOptions& aOptions, ModuleLoadRequest* aRequest,
+      JS::MutableHandle<JSObject*> aModuleOut) = 0;
+
+  // Called when a module script has been loaded, including imports.
+  virtual void OnModuleLoadComplete(ModuleLoadRequest* aRequest) = 0;
+
+  // Public API methods.
+
+ public:
+  ScriptLoaderInterface* GetScriptLoaderInterface() const { return mLoader; }
+
+  nsIGlobalObject* GetGlobalObject() const { return mGlobalObject; }
+
+  bool HasPendingDynamicImports() const;
+  void CancelDynamicImport(ModuleLoadRequest* aRequest, nsresult aResult);
+#ifdef DEBUG
+  bool HasDynamicImport(const ModuleLoadRequest* aRequest) const;
+#endif
+
+  // Start a load for a module script URI. Returns immediately if the module is
+  // already being loaded.
+  nsresult StartModuleLoad(ModuleLoadRequest* aRequest);
+  nsresult RestartModuleLoad(ModuleLoadRequest* aRequest);
+
+  // Notify the module loader when a fetch started by StartFetch() completes.
+  nsresult OnFetchComplete(ModuleLoadRequest* aRequest, nsresult aRv);
+
+  // Link the module and all its imports. This must occur prior to evaluation.
+  bool InstantiateModuleGraph(ModuleLoadRequest* aRequest);
+
+  // Executes the module.
   // Implements https://html.spec.whatwg.org/#run-a-module-script
-  nsresult EvaluateModule(nsIGlobalObject* aGlobalObject,
-                          ScriptLoadRequest* aRequest);
+  nsresult EvaluateModule(ModuleLoadRequest* aRequest);
 
-  void SetModuleFetchStarted(ModuleLoadRequest* aRequest);
-  void SetModuleFetchFinishedAndResumeWaitingRequests(
-      ModuleLoadRequest* aRequest, nsresult aResult);
+  void StartDynamicImport(ModuleLoadRequest* aRequest);
+  void ProcessDynamicImport(ModuleLoadRequest* aRequest);
+  void CancelAndClearDynamicImports();
 
-  bool ModuleMapContainsURL(nsIURI* aURL, nsIGlobalObject* aGlobal) const;
-  RefPtr<GenericNonExclusivePromise> WaitForModuleFetch(
-      nsIURI* aURL, nsIGlobalObject* aGlobal);
-  ModuleScript* GetFetchedModule(nsIURI* aURL, nsIGlobalObject* aGlobal) const;
+  // Internal methods.
 
-  JS::Value FindFirstParseError(ModuleLoadRequest* aRequest);
-  bool InstantiateModuleTree(ModuleLoadRequest* aRequest);
-  static nsresult InitDebuggerDataForModuleTree(JSContext* aCx,
-                                                ModuleLoadRequest* aRequest);
-  static nsresult ResolveRequestedModules(ModuleLoadRequest* aRequest,
-                                          nsCOMArray<nsIURI>* aUrlsOut);
+ private:
+  friend class JS::loader::ModuleLoadRequest;
+
+  static ModuleLoaderBase* GetCurrentModuleLoader(JSContext* aCx);
+  static LoadedScript* GetLoadedScriptOrNull(
+      JSContext* aCx, JS::Handle<JS::Value> aReferencingPrivate);
+
+  static void EnsureModuleHooksInitialized();
+
+  static void DynamicImportPrefChangedCallback(const char* aPrefName,
+                                               void* aClosure);
+
+  static JSObject* HostResolveImportedModule(
+      JSContext* aCx, JS::Handle<JS::Value> aReferencingPrivate,
+      JS::Handle<JSObject*> aModuleRequest);
+  static bool HostPopulateImportMeta(JSContext* aCx,
+                                     JS::Handle<JS::Value> aReferencingPrivate,
+                                     JS::Handle<JSObject*> aMetaObject);
+  static bool HostImportModuleDynamically(
+      JSContext* aCx, JS::Handle<JS::Value> aReferencingPrivate,
+      JS::Handle<JSObject*> aModuleRequest, JS::Handle<JSObject*> aPromise);
+  static bool HostGetSupportedImportAssertions(
+      JSContext* aCx, JS::ImportAssertionVector& aValues);
+
+  already_AddRefed<nsIURI> ResolveModuleSpecifier(LoadedScript* aScript,
+                                                  const nsAString& aSpecifier);
+
   static nsresult HandleResolveFailure(JSContext* aCx, LoadedScript* aScript,
                                        const nsAString& aSpecifier,
                                        uint32_t aLineNumber,
                                        uint32_t aColumnNumber,
                                        JS::MutableHandle<JS::Value> errorOut);
 
-  static already_AddRefed<nsIURI> ResolveModuleSpecifier(
-      ScriptLoaderInterface* loader, LoadedScript* aScript,
-      const nsAString& aSpecifier);
+  enum class RestartRequest { No, Yes };
+  nsresult StartOrRestartModuleLoad(ModuleLoadRequest* aRequest,
+                                    RestartRequest aRestart);
+
+  bool ModuleMapContainsURL(nsIURI* aURL) const;
+  bool IsModuleFetching(nsIURI* aURL) const;
+  RefPtr<GenericNonExclusivePromise> WaitForModuleFetch(nsIURI* aURL);
+  void SetModuleFetchStarted(ModuleLoadRequest* aRequest);
+
+  ModuleScript* GetFetchedModule(nsIURI* aURL) const;
+
+  JS::Value FindFirstParseError(ModuleLoadRequest* aRequest);
+  static nsresult InitDebuggerDataForModuleGraph(JSContext* aCx,
+                                                 ModuleLoadRequest* aRequest);
+  static nsresult ResolveRequestedModules(ModuleLoadRequest* aRequest,
+                                          nsCOMArray<nsIURI>* aUrlsOut);
+
+  void SetModuleFetchFinishedAndResumeWaitingRequests(
+      ModuleLoadRequest* aRequest, nsresult aResult);
 
   void StartFetchingModuleDependencies(ModuleLoadRequest* aRequest);
 
   RefPtr<GenericPromise> StartFetchingModuleAndDependencies(
       ModuleLoadRequest* aParent, nsIURI* aURI);
-
-  void StartDynamicImport(ModuleLoadRequest* aRequest);
 
   /**
    * Shorthand Wrapper for JSAPI FinishDynamicImport function for the reject
@@ -189,10 +324,9 @@ class ModuleLoaderBase : public nsISupports {
                                   nsresult aResult,
                                   JS::Handle<JSObject*> aEvaluationPromise);
 
+  void RemoveDynamicImport(ModuleLoadRequest* aRequest);
+
   nsresult CreateModuleScript(ModuleLoadRequest* aRequest);
-  nsresult ProcessFetchedModuleSource(ModuleLoadRequest* aRequest);
-  void ProcessDynamicImport(ModuleLoadRequest* aRequest);
-  void CancelAndClearDynamicImports();
 
  public:
   static mozilla::LazyLogModule gCspPRLog;

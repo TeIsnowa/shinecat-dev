@@ -81,6 +81,26 @@ Status ConvertPackedPixelFileToCodecInOut(const PackedPixelFile& ppf,
   io->blobs.xmp.clear();
   io->blobs.xmp.append(ppf.metadata.xmp);
 
+  // Append all other extra channels.
+  for (const PackedPixelFile::PackedExtraChannel& info :
+       ppf.extra_channels_info) {
+    ExtraChannelInfo out;
+    out.type = static_cast<jxl::ExtraChannel>(info.ec_info.type);
+    out.bit_depth.bits_per_sample = info.ec_info.bits_per_sample;
+    out.bit_depth.exponent_bits_per_sample =
+        info.ec_info.exponent_bits_per_sample;
+    out.bit_depth.floating_point_sample =
+        info.ec_info.exponent_bits_per_sample != 0;
+    out.dim_shift = info.ec_info.dim_shift;
+    out.name = info.name;
+    out.alpha_associated = (info.ec_info.alpha_premultiplied != 0);
+    out.spot_color[0] = info.ec_info.spot_color[0];
+    out.spot_color[1] = info.ec_info.spot_color[1];
+    out.spot_color[2] = info.ec_info.spot_color[2];
+    out.spot_color[3] = info.ec_info.spot_color[3];
+    io->metadata.m.extra_channel_info.push_back(std::move(out));
+  }
+
   // Convert the pixels
   io->dec_pixels = 0;
   io->frames.clear();
@@ -118,16 +138,18 @@ Status ConvertPackedPixelFileToCodecInOut(const PackedPixelFile& ppf,
                           frame.color.format.data_type == JXL_TYPE_FLOAT;
     JXL_RETURN_IF_ERROR(ConvertFromExternal(
         span, frame.color.xsize, frame.color.ysize,
-        io->metadata.m.color_encoding,
-        /*has_alpha=*/frame.color.format.num_channels == 2 ||
-            frame.color.format.num_channels == 4,
+        io->metadata.m.color_encoding, frame.color.format.num_channels,
         /*alpha_is_premultiplied=*/ppf.info.alpha_premultiplied,
         frame_bits_per_sample, frame.color.format.endianness,
         /*flipped_y=*/frame.color.flipped_y, pool, &bundle,
         /*float_in=*/float_in, /*align=*/0));
 
-    // TODO(deymo): Convert the extra channels. FIXME!
-    JXL_CHECK(frame.extra_channels.empty());
+    for (const auto& ppf_ec : frame.extra_channels) {
+      bundle.extra_channels().emplace_back(ppf_ec.xsize, ppf_ec.ysize);
+      JXL_CHECK(BufferToImageF(ppf_ec.format, ppf_ec.xsize, ppf_ec.ysize,
+                               ppf_ec.pixels(), ppf_ec.pixels_size, pool,
+                               &bundle.extra_channels().back()));
+    }
 
     io->frames.push_back(std::move(bundle));
     io->dec_pixels += frame.color.xsize * frame.color.ysize;

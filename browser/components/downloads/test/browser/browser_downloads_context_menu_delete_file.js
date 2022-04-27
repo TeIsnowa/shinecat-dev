@@ -38,6 +38,7 @@ add_task(async function test_download_deleteFile() {
   await SpecialPowers.pushPrefEnv({
     set: [
       ["browser.download.improvements_to_download_panel", true],
+      ["browser.download.always_ask_before_handling_new_types", false],
       ["browser.download.alwaysOpenPanel", false],
       ["browser.download.clearHistoryOnDelete", 2],
     ],
@@ -112,6 +113,13 @@ add_task(async function test_download_deleteFile() {
     downloadsListBox.childElementCount,
     0,
     "There should be a download in the list"
+  );
+
+  ok(
+    !DownloadsView.richListBox.selectedItem._shell.isCommandEnabled(
+      "downloadsCmd_deleteFile"
+    ),
+    "Delete file command should be disabled"
   );
 
   DownloadsPanel.hidePanel();

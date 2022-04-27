@@ -30,6 +30,7 @@
 #include "mozilla/dom/CSSFontFaceRule.h"
 #include "mozilla/dom/CSSFontFeatureValuesRule.h"
 #include "mozilla/dom/CSSImportRule.h"
+#include "mozilla/dom/CSSContainerRule.h"
 #include "mozilla/dom/CSSLayerBlockRule.h"
 #include "mozilla/dom/CSSLayerStatementRule.h"
 #include "mozilla/dom/CSSMediaRule.h"
@@ -224,12 +225,15 @@ RestyleHint ServoStyleSet::MediumFeaturesChanged(
 
   const bool mayAffectDefaultStyle =
       bool(aReason & kMediaFeaturesAffectingDefaultStyle);
+  const MediumFeaturesChangedResult result =
+      Servo_StyleSet_MediumFeaturesChanged(mRawSet.get(), &nonDocumentStyles,
+                                           mayAffectDefaultStyle);
+
   const bool viewportChanged =
       bool(aReason & MediaFeatureChangeReason::ViewportChange);
-  const MediumFeaturesChangedResult result =
-      Servo_StyleSet_MediumFeaturesChanged(
-          mRawSet.get(), &nonDocumentStyles, mayAffectDefaultStyle,
-          viewportChanged, mDocument->GetRootElement());
+  if (viewportChanged) {
+    InvalidateForViewportUnits(OnlyDynamic::No);
+  }
 
   const bool rulesChanged =
       result.mAffectsDocumentRules || result.mAffectsNonDocumentRules;
@@ -949,6 +953,7 @@ void ServoStyleSet::RuleChangedInternal(StyleSheet& aSheet, css::Rule& aRule,
     CASE_FOR(LayerBlock, LayerBlock)
     CASE_FOR(LayerStatement, LayerStatement)
     CASE_FOR(ScrollTimeline, ScrollTimeline)
+    CASE_FOR(Container, Container)
     // @namespace can only be inserted / removed when there are only other
     // @namespace and @import rules, and can't be mutated.
     case StyleCssRuleType::Namespace:
@@ -1214,6 +1219,7 @@ already_AddRefed<ComputedStyle> ServoStyleSet::ResolveForDeclarations(
 }
 
 void ServoStyleSet::UpdateStylist() {
+  AUTO_PROFILER_LABEL_RELEVANT_FOR_JS("Update stylesheet information", LAYOUT);
   MOZ_ASSERT(StylistNeedsUpdate());
 
   if (mStylistState & StylistState::StyleSheetsDirty) {
@@ -1320,6 +1326,16 @@ already_AddRefed<ComputedStyle> ServoStyleSet::ReparentComputedStyle(
                              aNewParentIgnoringFirstLine, aNewLayoutParent,
                              aElement, mRawSet.get())
       .Consume();
+}
+
+void ServoStyleSet::InvalidateForViewportUnits(OnlyDynamic aOnlyDynamic) {
+  dom::Element* root = mDocument->GetRootElement();
+  if (!root) {
+    return;
+  }
+
+  Servo_InvalidateForViewportUnits(mRawSet.get(), root,
+                                   aOnlyDynamic == OnlyDynamic::Yes);
 }
 
 NS_IMPL_ISUPPORTS(UACacheReporter, nsIMemoryReporter)

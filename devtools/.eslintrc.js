@@ -37,7 +37,6 @@ module.exports = {
         "client/shared/*.jsm",
         "client/shared/widgets/*.jsm",
         "client/storage/VariablesView.jsm",
-        "client/debugger/test/**",
       ],
       rules: {
         "consistent-return": "off",
@@ -78,7 +77,7 @@ module.exports = {
       },
     },
     {
-      files: ["client/framework/**", "client/debugger/test/**"],
+      files: ["client/framework/**"],
       rules: {
         strict: "off",
       },
@@ -122,7 +121,6 @@ module.exports = {
         "shared/loader/browser-loader.js",
         "shared/loader/worker-loader.js",
         "startup/aboutdebugging-registration.js",
-        "startup/aboutdevtools/aboutdevtools-registration.js",
         "startup/aboutdevtoolstoolbox-registration.js",
         "startup/devtools-startup.js",
       ],
@@ -156,7 +154,6 @@ module.exports = {
     // See bug 1224289.
     "mozilla/reject-importGlobalProperties": ["error", "everything"],
     "mozilla/var-only-at-top-level": "error",
-    "mozilla/use-chromeutils-import": ["error", { allowCu: true }],
 
     // Rules from the React plugin
     "react/display-name": "error",
@@ -395,5 +392,10 @@ module.exports = {
     // require assignment operator shorthand where possible or prohibit it
     // entirely
     "operator-assignment": "off",
+  },
+  settings: {
+    react: {
+      version: "16.8",
+    },
   },
 };

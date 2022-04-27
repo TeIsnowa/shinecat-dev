@@ -102,10 +102,10 @@ struct StackMap final {
       std::max(sizeof(jit::FloatRegisters::RegisterContent),
                sizeof(jit::Registers::RegisterContent));
 
-  // Add 16 words to account for the size of FrameWithTls including any shadow
-  // stack (at worst 8 words total), and then a little headroom in case the
-  // argument area had to be aligned.
-  static_assert(FrameWithTls::sizeOf() / sizeof(void*) <= 8);
+  // Add 16 words to account for the size of FrameWithInstances including any
+  // shadow stack (at worst 8 words total), and then a little headroom in case
+  // the argument area had to be aligned.
+  static_assert(FrameWithInstances::sizeOf() / sizeof(void*) <= 8);
   static_assert(maxFrameOffsetFromTop >=
                     (MaxParams * MaxParamSize / sizeof(void*)) + 16,
                 "limited size of the offset field");
@@ -356,7 +356,7 @@ wasm::StackMap* ConvertStackMapBoolVectorToStackMap(
 // MacroAssembler::wasmReserveStackChecked, in the case where the frame is
 // "small", as determined by that function.
 [[nodiscard]] bool CreateStackMapForFunctionEntryTrap(
-    const ArgTypeVector& argTypes, const jit::MachineState& trapExitLayout,
+    const ArgTypeVector& argTypes, const jit::RegisterOffsets& trapExitLayout,
     size_t trapExitLayoutWords, size_t nBytesReservedBeforeTrap,
     size_t nInboundStackArgBytes, wasm::StackMap** result);
 
@@ -366,7 +366,7 @@ wasm::StackMap* ConvertStackMapBoolVectorToStackMap(
 // |args[0]| corresponds to the low addressed end of the described section of
 // the save area.
 [[nodiscard]] bool GenerateStackmapEntriesForTrapExit(
-    const ArgTypeVector& args, const jit::MachineState& trapExitLayout,
+    const ArgTypeVector& args, const jit::RegisterOffsets& trapExitLayout,
     const size_t trapExitLayoutNumWords, ExitStubMapVector* extras);
 
 // Shared write barrier code.

@@ -30,9 +30,7 @@ namespace mozilla::dom {
 class ReadableStream;
 class ReadableStreamDefaultReader;
 struct UnderlyingSource;
-class UnderlyingSourceCancelCallbackHelper;
-class UnderlyingSourcePullCallbackHelper;
-class UnderlyingSourceStartCallbackHelper;
+class UnderlyingSourceAlgorithms;
 class ReadableStreamGenericReader;
 
 class ReadableStreamDefaultController final : public ReadableStreamController,
@@ -74,12 +72,9 @@ class ReadableStreamDefaultController final : public ReadableStreamController,
   void ReleaseSteps() override;
 
   // Internal Slot Accessors
-  UnderlyingSourceCancelCallbackHelper* GetCancelAlgorithm() const {
-    return mCancelAlgorithm;
-  }
-  void SetCancelAlgorithm(
-      UnderlyingSourceCancelCallbackHelper* aCancelAlgorithm) {
-    mCancelAlgorithm = aCancelAlgorithm;
+  UnderlyingSourceAlgorithmsBase* GetAlgorithms() { return mAlgorithms; }
+  void SetAlgorithms(UnderlyingSourceAlgorithmsBase* aAlgorithms) {
+    mAlgorithms = aAlgorithms;
   }
 
   bool CloseRequested() const { return mCloseRequested; }
@@ -89,13 +84,6 @@ class ReadableStreamDefaultController final : public ReadableStreamController,
 
   bool PullAgain() const { return mPullAgain; }
   void SetPullAgain(bool aPullAgain) { mPullAgain = aPullAgain; }
-
-  UnderlyingSourcePullCallbackHelper* GetPullAlgorithm() {
-    return mPullAlgorithm;
-  }
-  void SetPullAlgorithm(UnderlyingSourcePullCallbackHelper* aPullAlgorithm) {
-    mPullAlgorithm = aPullAlgorithm;
-  }
 
   bool Pulling() const { return mPulling; }
   void SetPulling(bool aPulling) { mPulling = aPulling; }
@@ -125,10 +113,9 @@ class ReadableStreamDefaultController final : public ReadableStreamController,
 
  private:
   // Internal Slots:
-  RefPtr<UnderlyingSourceCancelCallbackHelper> mCancelAlgorithm;
+  RefPtr<UnderlyingSourceAlgorithmsBase> mAlgorithms;
   bool mCloseRequested = false;
   bool mPullAgain = false;
-  RefPtr<UnderlyingSourcePullCallbackHelper> mPullAlgorithm;
   bool mPulling = false;
   QueueWithSizes mQueue = {};
   double mQueueTotalSize = 0.0;
@@ -138,38 +125,47 @@ class ReadableStreamDefaultController final : public ReadableStreamController,
   RefPtr<ReadableStream> mStream;
 };
 
-MOZ_CAN_RUN_SCRIPT extern void SetUpReadableStreamDefaultController(
+MOZ_CAN_RUN_SCRIPT void SetUpReadableStreamDefaultController(
     JSContext* aCx, ReadableStream* aStream,
     ReadableStreamDefaultController* aController,
-    UnderlyingSourceStartCallbackHelper* aStartAlgorithm,
-    UnderlyingSourcePullCallbackHelper* aPullAlgorithm,
-    UnderlyingSourceCancelCallbackHelper* aCancelAlgorithm,
-    double aHighWaterMark, QueuingStrategySize* aSizeAlgorithm,
-    ErrorResult& aRv);
+    UnderlyingSourceAlgorithmsBase* aAlgorithms, double aHighWaterMark,
+    QueuingStrategySize* aSizeAlgorithm, ErrorResult& aRv);
 
-MOZ_CAN_RUN_SCRIPT extern void
+MOZ_CAN_RUN_SCRIPT void
 SetupReadableStreamDefaultControllerFromUnderlyingSource(
     JSContext* aCx, ReadableStream* aStream, JS::HandleObject aUnderlyingSource,
     UnderlyingSource& aUnderlyingSourceDict, double aHighWaterMark,
     QueuingStrategySize* aSizeAlgorithm, ErrorResult& aRv);
 
-MOZ_CAN_RUN_SCRIPT extern void ReadableStreamDefaultControllerEnqueue(
+MOZ_CAN_RUN_SCRIPT void ReadableStreamDefaultControllerEnqueue(
     JSContext* aCx, ReadableStreamDefaultController* aController,
     JS::Handle<JS::Value> aChunk, ErrorResult& aRv);
 
-MOZ_CAN_RUN_SCRIPT extern void ReadableStreamDefaultControllerClose(
+MOZ_CAN_RUN_SCRIPT void ReadableStreamDefaultControllerClose(
     JSContext* aCx, ReadableStreamDefaultController* aController,
     ErrorResult& aRv);
 
-MOZ_CAN_RUN_SCRIPT extern void ReadableStreamDefaultReaderRead(
+MOZ_CAN_RUN_SCRIPT void ReadableStreamDefaultReaderRead(
     JSContext* aCx, ReadableStreamGenericReader* reader, ReadRequest* aRequest,
     ErrorResult& aRv);
 
-extern void ReadableStreamDefaultControllerError(
+void ReadableStreamDefaultControllerError(
     JSContext* aCx, ReadableStreamDefaultController* aController,
     JS::Handle<JS::Value> aValue, ErrorResult& aRv);
 
-extern void ReadableStreamDefaultControllerClearAlgorithms(
+void ReadableStreamDefaultControllerClearAlgorithms(
+    ReadableStreamDefaultController* aController);
+
+Nullable<double> ReadableStreamDefaultControllerGetDesiredSize(
+    ReadableStreamDefaultController* aController);
+
+enum class CloseOrEnqueue { Close, Enqueue };
+
+bool ReadableStreamDefaultControllerCanCloseOrEnqueueAndThrow(
+    ReadableStreamDefaultController* aController,
+    CloseOrEnqueue aCloseOrEnqueue, ErrorResult& aRv);
+
+bool ReadableStreamDefaultControllerShouldCallPull(
     ReadableStreamDefaultController* aController);
 
 }  // namespace mozilla::dom

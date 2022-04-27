@@ -212,9 +212,7 @@ class RootFront extends FrontClassWithSpec(rootSpec) {
    *
    * @param [optional] object filter
    *        A dictionary object with following optional attributes:
-   *         - browserId: use to match any tab (should become the new way to identify any remote tab)
-   *         - outerWindowID: used to match tabs in parent process (obsolete, use browserId)
-   *         - tabId: used to match tabs in child processes (obsolete, use browserId)
+   *         - browserId: use to match any tab
    *         - tab: a reference to xul:tab element (used for local tab debugging)
    *         - isWebExtension: an optional boolean to flag TabDescriptors
    *        If nothing is specified, returns the actor for the currently
@@ -225,10 +223,6 @@ class RootFront extends FrontClassWithSpec(rootSpec) {
     if (filter) {
       if (typeof filter.browserId == "number") {
         packet.browserId = filter.browserId;
-      } else if (typeof filter.outerWindowID == "number") {
-        packet.outerWindowID = filter.outerWindowID;
-      } else if (typeof filter.tabId == "number") {
-        packet.tabId = filter.tabId;
       } else if ("tab" in filter) {
         const browser = filter.tab.linkedBrowser;
         packet.browserId = browser.browserId;

@@ -13,6 +13,7 @@
 #include "mozilla/TextUtils.h"
 
 #include <algorithm>
+#include <cmath>
 #include <iterator>
 
 #include "jsfriendapi.h"
@@ -72,6 +73,58 @@ using mozilla::Maybe;
 using JS::AutoCheckCannotGC;
 using JS::IsArrayAnswer;
 using JS::ToUint32;
+
+static inline bool ObjectMayHaveExtraIndexedOwnProperties(JSObject* obj) {
+  if (!obj->is<NativeObject>()) {
+    return true;
+  }
+
+  if (obj->as<NativeObject>().isIndexed()) {
+    return true;
+  }
+
+  if (obj->is<TypedArrayObject>()) {
+    return true;
+  }
+
+  return ClassMayResolveId(*obj->runtimeFromAnyThread()->commonNames,
+                           obj->getClass(), PropertyKey::Int(0), obj);
+}
+
+bool js::PrototypeMayHaveIndexedProperties(NativeObject* obj) {
+  do {
+    MOZ_ASSERT(obj->hasStaticPrototype(),
+               "dynamic-prototype objects must be non-native");
+
+    JSObject* proto = obj->staticPrototype();
+    if (!proto) {
+      return false;  // no extra indexed properties found
+    }
+
+    if (ObjectMayHaveExtraIndexedOwnProperties(proto)) {
+      return true;
+    }
+    obj = &proto->as<NativeObject>();
+    if (obj->getDenseInitializedLength() != 0) {
+      return true;
+    }
+  } while (true);
+}
+
+/*
+ * Whether obj may have indexed properties anywhere besides its dense
+ * elements. This includes other indexed properties in its shape hierarchy, and
+ * indexed properties or elements along its prototype chain.
+ */
+static bool ObjectMayHaveExtraIndexedProperties(JSObject* obj) {
+  MOZ_ASSERT_IF(obj->hasDynamicPrototype(), !obj->is<NativeObject>());
+
+  if (ObjectMayHaveExtraIndexedOwnProperties(obj)) {
+    return true;
+  }
+
+  return PrototypeMayHaveIndexedProperties(&obj->as<NativeObject>());
+}
 
 bool JS::IsArray(JSContext* cx, HandleObject obj, IsArrayAnswer* answer) {
   if (obj->is<ArrayObject>()) {
@@ -879,54 +932,6 @@ static bool array_addProperty(JSContext* cx, HandleObject obj, HandleId id,
     arr->setLength(index + 1);
   }
   return true;
-}
-
-static inline bool ObjectMayHaveExtraIndexedOwnProperties(JSObject* obj) {
-  if (!obj->is<NativeObject>()) {
-    return true;
-  }
-
-  if (obj->as<NativeObject>().isIndexed()) {
-    return true;
-  }
-
-  if (obj->is<TypedArrayObject>()) {
-    return true;
-  }
-
-  return ClassMayResolveId(*obj->runtimeFromAnyThread()->commonNames,
-                           obj->getClass(), PropertyKey::Int(0), obj);
-}
-
-/*
- * Whether obj may have indexed properties anywhere besides its dense
- * elements. This includes other indexed properties in its shape hierarchy, and
- * indexed properties or elements along its prototype chain.
- */
-bool js::ObjectMayHaveExtraIndexedProperties(JSObject* obj) {
-  MOZ_ASSERT_IF(obj->hasDynamicPrototype(), !obj->is<NativeObject>());
-
-  if (ObjectMayHaveExtraIndexedOwnProperties(obj)) {
-    return true;
-  }
-
-  do {
-    MOZ_ASSERT(obj->hasStaticPrototype(),
-               "dynamic-prototype objects must be non-native, ergo must "
-               "have failed ObjectMayHaveExtraIndexedOwnProperties");
-
-    obj = obj->staticPrototype();
-    if (!obj) {
-      return false;  // no extra indexed properties found
-    }
-
-    if (ObjectMayHaveExtraIndexedOwnProperties(obj)) {
-      return true;
-    }
-    if (obj->as<NativeObject>().getDenseInitializedLength() != 0) {
-      return true;
-    }
-  } while (true);
 }
 
 static Shape* AddLengthProperty(JSContext* cx, HandleShape shape) {
@@ -1765,14 +1770,14 @@ struct NumericElement {
 static bool ComparatorNumericLeftMinusRight(const NumericElement& a,
                                             const NumericElement& b,
                                             bool* lessOrEqualp) {
-  *lessOrEqualp = (a.dv <= b.dv);
+  *lessOrEqualp = std::isunordered(a.dv, b.dv) || (a.dv <= b.dv);
   return true;
 }
 
 static bool ComparatorNumericRightMinusLeft(const NumericElement& a,
                                             const NumericElement& b,
                                             bool* lessOrEqualp) {
-  *lessOrEqualp = (b.dv <= a.dv);
+  *lessOrEqualp = std::isunordered(a.dv, b.dv) || (b.dv <= a.dv);
   return true;
 }
 
@@ -2362,7 +2367,11 @@ void js::ArrayShiftMoveElements(ArrayObject* arr) {
 
   if (!arr->tryShiftDenseElements(1)) {
     arr->moveDenseElements(0, 1, initlen - 1);
+    arr->setDenseInitializedLength(initlen - 1);
   }
+
+  MOZ_ASSERT(arr->getDenseInitializedLength() == initlen - 1);
+  arr->setLength(initlen - 1);
 }
 
 static inline void SetInitializedLength(JSContext* cx, NativeObject* obj,
@@ -3471,7 +3480,7 @@ static bool SliceSparse(JSContext* cx, HandleObject obj, uint64_t begin,
 static JSObject* SliceArguments(JSContext* cx, Handle<ArgumentsObject*> argsobj,
                                 uint32_t begin, uint32_t count) {
   MOZ_ASSERT(!argsobj->hasOverriddenLength() &&
-             !argsobj->isAnyElementDeleted());
+             !argsobj->hasOverriddenElement());
   MOZ_ASSERT(begin + count <= argsobj->initialLength());
 
   ArrayObject* result = NewDenseFullyAllocatedArray(cx, count);
@@ -3528,7 +3537,7 @@ static bool ArraySliceOrdinary(JSContext* cx, HandleObject obj, uint64_t begin,
 
   if (obj->is<ArgumentsObject>()) {
     Handle<ArgumentsObject*> argsobj = obj.as<ArgumentsObject>();
-    if (!argsobj->hasOverriddenLength() && !argsobj->isAnyElementDeleted()) {
+    if (!argsobj->hasOverriddenLength() && !argsobj->hasOverriddenElement()) {
       MOZ_ASSERT(begin <= UINT32_MAX, "begin is limited by |argsobj|'s length");
       JSObject* narr = SliceArguments(cx, argsobj, uint32_t(begin), count);
       if (!narr) {
@@ -3721,6 +3730,50 @@ JSObject* js::ArraySliceDense(JSContext* cx, HandleObject obj, int32_t begin,
     return nullptr;
   }
   return &argv[0].toObject();
+}
+
+JSObject* js::ArgumentsSliceDense(JSContext* cx, HandleObject obj,
+                                  int32_t begin, int32_t end,
+                                  HandleObject result) {
+  MOZ_ASSERT(obj->is<ArgumentsObject>());
+  MOZ_ASSERT(IsArraySpecies(cx, obj));
+
+  Handle<ArgumentsObject*> argsobj = obj.as<ArgumentsObject>();
+  MOZ_ASSERT(!argsobj->hasOverriddenLength());
+  MOZ_ASSERT(!argsobj->hasOverriddenElement());
+
+  uint32_t length = argsobj->initialLength();
+  uint32_t actualBegin = NormalizeSliceTerm(begin, length);
+  uint32_t actualEnd = NormalizeSliceTerm(end, length);
+
+  if (actualBegin > actualEnd) {
+    actualBegin = actualEnd;
+  }
+  uint32_t count = actualEnd - actualBegin;
+
+  if (result) {
+    Handle<ArrayObject*> resArray = result.as<ArrayObject>();
+    MOZ_ASSERT(resArray->getDenseInitializedLength() == 0);
+    MOZ_ASSERT(resArray->length() == 0);
+
+    if (count > 0) {
+      if (!resArray->ensureElements(cx, count)) {
+        return nullptr;
+      }
+      resArray->setDenseInitializedLength(count);
+      resArray->setLength(count);
+
+      for (uint32_t index = 0; index < count; index++) {
+        const Value& v = argsobj->element(actualBegin + index);
+        resArray->initDenseElement(index, v);
+      }
+    }
+
+    return resArray;
+  }
+
+  // Slower path if the JIT wasn't able to allocate an object inline.
+  return SliceArguments(cx, argsobj, actualBegin, count);
 }
 
 static bool array_isArray(JSContext* cx, unsigned argc, Value* vp) {
@@ -4590,7 +4643,6 @@ static const JSClassOps ArrayObjectClassOps = {
     nullptr,            // mayResolve
     nullptr,            // finalize
     nullptr,            // call
-    nullptr,            // hasInstance
     nullptr,            // construct
     nullptr,            // trace
 };

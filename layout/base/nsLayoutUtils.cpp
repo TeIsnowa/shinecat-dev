@@ -564,7 +564,8 @@ void nsLayoutUtils::UnionChildOverflow(nsIFrame* aFrame,
       continue;
     }
     for (nsIFrame* child : list) {
-      aOverflowAreas.UnionWith(child->GetOverflowAreasRelativeToParent());
+      aOverflowAreas.UnionWith(
+          child->GetActualAndNormalOverflowAreasRelativeToParent());
     }
   }
 }
@@ -1851,11 +1852,15 @@ void nsLayoutUtils::ConstrainToCoordValues(float& aStart, float& aSize) {
   // can't return a value greater than nscoord_MAX. If aSize is greater than
   // nscoord_MAX then we reduce it to nscoord_MAX while keeping the rect
   // centered:
-  if (aSize > float(nscoord_MAX)) {
+  if (MOZ_UNLIKELY(std::isnan(aSize))) {
+    // Can happen if aStart is -inf and aSize is +inf for example.
+    aStart = 0.0f;
+    aSize = float(nscoord_MAX);
+  } else if (aSize > float(nscoord_MAX)) {
     float excess = aSize - float(nscoord_MAX);
     excess /= 2;
     aStart += excess;
-    aSize = (float)nscoord_MAX;
+    aSize = float(nscoord_MAX);
   }
 }
 
@@ -1882,7 +1887,11 @@ void nsLayoutUtils::ConstrainToCoordValues(gfxFloat& aStart, gfxFloat& aSize) {
   aSize = max - aStart;
   // If the width if still greater than the max nscoord, then bring both
   // endpoints in by the same amount until it fits.
-  if (aSize > nscoord_MAX) {
+  if (MOZ_UNLIKELY(std::isnan(aSize))) {
+    // Can happen if aStart is -inf and aSize is +inf for example.
+    aStart = 0.0f;
+    aSize = nscoord_MAX;
+  } else if (aSize > nscoord_MAX) {
     gfxFloat excess = aSize - nscoord_MAX;
     excess /= 2;
 
@@ -2433,11 +2442,12 @@ nsLayoutUtils::TransformResult nsLayoutUtils::TransformRect(
                0.5f,
            std::numeric_limits<Float>::max() * devPixelsPerAppUnitFromFrame,
            std::numeric_limits<Float>::max() * devPixelsPerAppUnitFromFrame));
-  aRect.x = NSToCoordRound(toDevPixels.x / devPixelsPerAppUnitToFrame);
-  aRect.y = NSToCoordRound(toDevPixels.y / devPixelsPerAppUnitToFrame);
-  aRect.width = NSToCoordRound(toDevPixels.width / devPixelsPerAppUnitToFrame);
+  aRect.x = NSToCoordRoundWithClamp(toDevPixels.x / devPixelsPerAppUnitToFrame);
+  aRect.y = NSToCoordRoundWithClamp(toDevPixels.y / devPixelsPerAppUnitToFrame);
+  aRect.width =
+      NSToCoordRoundWithClamp(toDevPixels.width / devPixelsPerAppUnitToFrame);
   aRect.height =
-      NSToCoordRound(toDevPixels.height / devPixelsPerAppUnitToFrame);
+      NSToCoordRoundWithClamp(toDevPixels.height / devPixelsPerAppUnitToFrame);
   return TRANSFORM_SUCCEEDED;
 }
 
@@ -3680,7 +3690,11 @@ struct BoxToRect : public nsLayoutUtils::BoxCallback {
         nsLayoutUtils::TransformRect(outer, mRelativeTo, r);
       }
     } else {
-      r += outer->GetOffsetTo(mRelativeTo);
+      if (aFrame->PresContext() != mRelativeTo->PresContext()) {
+        r += outer->GetOffsetToCrossDoc(mRelativeTo);
+      } else {
+        r += outer->GetOffsetTo(mRelativeTo);
+      }
     }
     mCallback->AddRect(r);
   }
@@ -6692,7 +6706,8 @@ ImgDrawResult nsLayoutUtils::DrawImage(
     const nsRect& aFill, const nsPoint& aAnchor, const nsRect& aDirty,
     uint32_t aImageFlags, float aOpacity) {
   Maybe<SVGImageContext> svgContext;
-  SVGImageContext::MaybeStoreContextPaint(svgContext, aComputedStyle, aImage);
+  SVGImageContext::MaybeStoreContextPaint(svgContext, *aPresContext,
+                                          *aComputedStyle, aImage);
 
   return DrawImageInternal(aContext, aPresContext, aImage, aSamplingFilter,
                            aDest, aFill, aAnchor, aDirty, svgContext,
@@ -8092,23 +8107,28 @@ bool nsLayoutUtils::GetContentViewerSize(
 bool nsLayoutUtils::UpdateCompositionBoundsForRCDRSF(
     ParentLayerRect& aCompBounds, const nsPresContext* aPresContext) {
   SubtractDynamicToolbar shouldSubtractDynamicToolbar =
-      SubtractDynamicToolbar::Yes;
+      aPresContext->IsRootContentDocumentCrossProcess() &&
+              aPresContext->HasDynamicToolbar()
+          ? SubtractDynamicToolbar::Yes
+          : SubtractDynamicToolbar::No;
 
-  if (RefPtr<MobileViewportManager> MVM =
-          aPresContext->PresShell()->GetMobileViewportManager()) {
-    CSSSize intrinsicCompositionSize = MVM->GetIntrinsicCompositionSize();
+  if (shouldSubtractDynamicToolbar == SubtractDynamicToolbar::Yes) {
+    if (RefPtr<MobileViewportManager> MVM =
+            aPresContext->PresShell()->GetMobileViewportManager()) {
+      CSSSize intrinsicCompositionSize = MVM->GetIntrinsicCompositionSize();
 
-    if (nsIScrollableFrame* rootScrollableFrame =
-            aPresContext->PresShell()->GetRootScrollFrameAsScrollable()) {
-      // Expand the composition size to include the area initially covered by
-      // the dynamic toolbar only if the content is taller than the intrinsic
-      // composition size (i.e. the dynamic toolbar should be able to move only
-      // if the content is vertically scrollable).
-      if (intrinsicCompositionSize.height <
-          CSSPixel::FromAppUnits(
-              CalculateScrollableRectForFrame(rootScrollableFrame, nullptr)
-                  .Height())) {
-        shouldSubtractDynamicToolbar = SubtractDynamicToolbar::No;
+      if (nsIScrollableFrame* rootScrollableFrame =
+              aPresContext->PresShell()->GetRootScrollFrameAsScrollable()) {
+        // Expand the composition size to include the area initially covered by
+        // the dynamic toolbar only if the content is taller than the intrinsic
+        // composition size (i.e. the dynamic toolbar should be able to move
+        // only if the content is vertically scrollable).
+        if (intrinsicCompositionSize.height <
+            CSSPixel::FromAppUnits(
+                CalculateScrollableRectForFrame(rootScrollableFrame, nullptr)
+                    .Height())) {
+          shouldSubtractDynamicToolbar = SubtractDynamicToolbar::No;
+        }
       }
     }
   }
@@ -8612,7 +8632,7 @@ ScrollMetadata nsLayoutUtils::ComputeScrollMetadata(
     CSSPoint layoutScrollOffset =
         CSSPoint::FromAppUnits(scrollableFrame->GetScrollPosition());
     CSSPoint visualScrollOffset =
-        aIsRootContent && presShell->IsVisualViewportOffsetSet()
+        aIsRootContent
             ? CSSPoint::FromAppUnits(presShell->GetVisualViewportOffset())
             : layoutScrollOffset;
     metrics.SetVisualScrollOffset(visualScrollOffset);
@@ -9225,7 +9245,9 @@ static nsSize ComputeMaxSizeForPartialPrerender(nsIFrame* aFrame,
   // so that the result bound's width and height would be pretty much same
   // as the one rotated by the inverse matrix.
   result = transform2D.TransformBounds(result);
-  return nsSize(result.width, result.height);
+  return nsSize(
+      result.width < (float)nscoord_MAX ? result.width : nscoord_MAX,
+      result.height < (float)nscoord_MAX ? result.height : nscoord_MAX);
 }
 
 /* static */
@@ -9722,7 +9744,7 @@ static std::pair<Maybe<ScreenRect>, FramePosition> GetFrameVisibleRectOnScreen(
 
   nsIFrame* rootFrame = topContextInProcess->PresShell()->GetRootFrame();
   nsRect transformedToIFrame = nsLayoutUtils::TransformFrameRectToAncestor(
-      aFrame, aFrame->GetRectRelativeToSelf(), rootFrame);
+      aFrame, aFrame->InkOverflowRectRelativeToSelf(), rootFrame);
 
   LayoutDeviceRect rectInLayoutDevicePixel = LayoutDeviceRect::FromAppUnits(
       transformedToIFrame, topContextInProcess->AppUnitsPerDevPixel());
@@ -9827,9 +9849,16 @@ template <typename SizeType>
           mozilla::PixelCastJustification::LayoutDeviceIsScreenForBounds)
           .height;
 
-  return SizeType(
-      aSize.width,
-      NSCoordSaturatingAdd(aSize.height, aSize.height * toolbarHeightRatio));
+  SizeType expandedSize = aSize;
+  static_assert(std::is_same_v<nsSize, SizeType> ||
+                std::is_same_v<CSSSize, SizeType>);
+  if constexpr (std::is_same_v<nsSize, SizeType>) {
+    expandedSize.height =
+        NSCoordSaturatingAdd(aSize.height, aSize.height * toolbarHeightRatio);
+  } else if (std::is_same_v<CSSSize, SizeType>) {
+    expandedSize.height = aSize.height + aSize.height * toolbarHeightRatio;
+  }
+  return expandedSize;
 }
 
 CSSSize nsLayoutUtils::ExpandHeightForDynamicToolbar(

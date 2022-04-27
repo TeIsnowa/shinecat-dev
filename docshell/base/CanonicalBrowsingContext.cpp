@@ -184,6 +184,9 @@ ContentParent* CanonicalBrowsingContext::GetContentParent() const {
   }
 
   ContentProcessManager* cpm = ContentProcessManager::GetSingleton();
+  if (!cpm) {
+    return nullptr;
+  }
   return cpm->GetContentProcessById(ContentParentId(mProcessId));
 }
 
@@ -306,6 +309,7 @@ void CanonicalBrowsingContext::ReplacedBy(
   txn.SetBrowserId(GetBrowserId());
   txn.SetHistoryID(GetHistoryID());
   txn.SetExplicitActive(GetExplicitActive());
+  txn.SetEmbedderColorScheme(GetEmbedderColorScheme());
   txn.SetHasRestoreData(GetHasRestoreData());
   txn.SetShouldDelayMediaFromStart(GetShouldDelayMediaFromStart());
   // As this is a different BrowsingContext, set InitialSandboxFlags to the
@@ -313,6 +317,8 @@ void CanonicalBrowsingContext::ReplacedBy(
   // about:blank documents created in it.
   txn.SetSandboxFlags(GetSandboxFlags());
   txn.SetInitialSandboxFlags(GetSandboxFlags());
+  txn.SetTargetTopLevelLinkClicksToBlankInternal(
+      TargetTopLevelLinkClicksToBlank());
   if (aNewContext->EverAttached()) {
     MOZ_ALWAYS_SUCCEEDS(txn.Commit(aNewContext));
   } else {
@@ -576,13 +582,12 @@ CanonicalBrowsingContext::CreateLoadingSessionHistoryEntryForLoad(
 
 UniquePtr<LoadingSessionHistoryInfo>
 CanonicalBrowsingContext::ReplaceLoadingSessionHistoryEntryForLoad(
-    LoadingSessionHistoryInfo* aInfo, nsIChannel* aOldChannel,
-    nsIChannel* aNewChannel) {
+    LoadingSessionHistoryInfo* aInfo, nsIChannel* aNewChannel) {
   MOZ_ASSERT(aInfo);
   MOZ_ASSERT(aNewChannel);
 
   SessionHistoryInfo newInfo = SessionHistoryInfo(
-      aOldChannel, aNewChannel, aInfo->mInfo.LoadType(),
+      aNewChannel, aInfo->mInfo.LoadType(),
       aInfo->mInfo.GetPartitionedPrincipalToInherit(), aInfo->mInfo.GetCsp());
 
   for (size_t i = 0; i < mLoadingEntries.Length(); ++i) {
@@ -1928,12 +1933,11 @@ CanonicalBrowsingContext::ChangeRemoteness(
 
   // If we're aiming to end up in a new process of the same type as our old
   // process, and then putting our previous document in the BFCache, try to stay
-  // in the same process to avoid creating new processes unnecessarially.
+  // in the same process to avoid creating new processes unnecessarily.
   RefPtr<ContentParent> existingProcess = GetContentParent();
   if (existingProcess && existingProcess->IsAlive() &&
       aOptions.mReplaceBrowsingContext &&
-      aOptions.mRemoteType == existingProcess->GetRemoteType() &&
-      aOptions.mRemoteType != LARGE_ALLOCATION_REMOTE_TYPE) {
+      aOptions.mRemoteType == existingProcess->GetRemoteType()) {
     change->mContentParent = existingProcess;
     change->mContentParent->AddKeepAlive();
     change->ProcessLaunched();
@@ -2363,7 +2367,7 @@ void CanonicalBrowsingContext::UpdateSessionStoreSessionStorage(
   using DataPromise = BackgroundSessionStorageManager::DataPromise;
   BackgroundSessionStorageManager::GetData(
       this, StaticPrefs::browser_sessionstore_dom_storage_limit(),
-      /* aCancelSessionStoreTiemr = */ true)
+      /* aClearSessionStoreTimer = */ true)
       ->Then(GetCurrentSerialEventTarget(), __func__,
              [self = RefPtr{this}, aDone, epoch = GetSessionStoreEpoch()](
                  const DataPromise::ResolveOrRejectValue& valueList) {
@@ -2591,12 +2595,6 @@ bool CanonicalBrowsingContext::AllowedInBFCache(
     return false;
   }
 
-  nsAutoCString remoteType;
-  GetCurrentRemoteType(remoteType, IgnoredErrorResult());
-  if (remoteType == LARGE_ALLOCATION_REMOTE_TYPE) {
-    return false;
-  }
-
   uint32_t bfcacheCombo = 0;
   if (mRestoreState) {
     bfcacheCombo |= BFCacheStatus::RESTORING;
@@ -2680,6 +2678,12 @@ bool CanonicalBrowsingContext::AllowedInBFCache(
 void CanonicalBrowsingContext::SetTouchEventsOverride(
     dom::TouchEventsOverride aOverride, ErrorResult& aRv) {
   SetTouchEventsOverrideInternal(aOverride, aRv);
+}
+
+void CanonicalBrowsingContext::SetTargetTopLevelLinkClicksToBlank(
+    bool aTargetTopLevelLinkClicksToBlank, ErrorResult& aRv) {
+  SetTargetTopLevelLinkClicksToBlankInternal(aTargetTopLevelLinkClicksToBlank,
+                                             aRv);
 }
 
 void CanonicalBrowsingContext::AddPageAwakeRequest() {
