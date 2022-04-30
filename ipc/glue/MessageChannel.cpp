@@ -873,8 +873,6 @@ bool MessageChannel::SendBuildIDsMatchMessage(const char* aParentBuildID) {
       // tooling to avoid intermittent missing leakcheck
       NoteIntentionalCrash(XRE_GetProcessTypeString());
       if (XRE_IsContentProcess()) {
-        // Make sure we do not die too early, as this causes weird behavior
-        PR_Sleep(PR_MillisecondsToInterval(1000));
         return false;
       }
     }
@@ -2137,7 +2135,7 @@ void MessageChannel::AddProfilerMarker(const IPC::Message& aMessage,
   mMonitor->AssertCurrentThreadOwns();
 
   if (profiler_feature_active(ProfilerFeature::IPCMessages)) {
-    int32_t pid = mListener->OtherPidMaybeInvalid();
+    base::ProcessId pid = mListener->OtherPidMaybeInvalid();
     // Only record markers for IPCs with a valid pid.
     // And if one of the profiler mutexes is locked on this thread, don't record
     // markers, because we don't want to expose profiler IPCs due to the

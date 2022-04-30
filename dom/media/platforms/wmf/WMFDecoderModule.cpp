@@ -170,6 +170,20 @@ int WMFDecoderModule::GetNumDecoderThreads() {
 /* static */
 HRESULT WMFDecoderModule::CreateMFTDecoder(const WMFStreamType& aType,
                                            RefPtr<MFTDecoder>& aDecoder) {
+  // Do not expose any video decoder on utility process which is only for audio
+  // decoding.
+  if (XRE_IsUtilityProcess()) {
+    switch (aType) {
+      case WMFStreamType::H264:
+      case WMFStreamType::VP8:
+      case WMFStreamType::VP9:
+      case WMFStreamType::AV1:
+        return E_FAIL;
+      default:
+        break;
+    }
+  }
+
   switch (aType) {
     case WMFStreamType::H264:
       return aDecoder->Create(CLSID_CMSH264DecoderMFT);
@@ -271,6 +285,20 @@ bool WMFDecoderModule::CanCreateMFTDecoder(const WMFStreamType& aType) {
       break;
   }
 
+  // Do not expose any video decoder on utility process which is only for audio
+  // decoding.
+  if (XRE_IsUtilityProcess()) {
+    switch (aType) {
+      case WMFStreamType::H264:
+      case WMFStreamType::VP8:
+      case WMFStreamType::VP9:
+      case WMFStreamType::AV1:
+        return false;
+      default:
+        break;
+    }
+  }
+
   return sSupportedTypes.contains(aType);
 }
 
@@ -299,6 +327,12 @@ WMFStreamType WMFDecoderModule::GetStreamTypeFromMimeType(
     return WMFStreamType::MP3;
   }
   return WMFStreamType::Unknown;
+}
+
+bool WMFDecoderModule::SupportsColorDepth(
+    gfx::ColorDepth aColorDepth, DecoderDoctorDiagnostics* aDiagnostics) const {
+  // Color depth support can be determined by creating DX decoders.
+  return true;
 }
 
 media::DecodeSupportSet WMFDecoderModule::Supports(

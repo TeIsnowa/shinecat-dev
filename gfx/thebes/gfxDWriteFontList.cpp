@@ -936,6 +936,8 @@ gfxFontEntry* gfxDWriteFontList::LookupLocalFont(
     nsPresContext* aPresContext, const nsACString& aFontName,
     WeightRange aWeightForEntry, StretchRange aStretchForEntry,
     SlantStyleRange aStyleForEntry) {
+  AutoLock lock(mLock);
+
   if (SharedFontList()) {
     return LookupInSharedFaceNameList(aPresContext, aFontName, aWeightForEntry,
                                       aStretchForEntry, aStyleForEntry);
@@ -1245,7 +1247,7 @@ void gfxDWriteFontList::AppendFamiliesFromCollection(
         sysLocIndex = 1;
       }
       for (unsigned index = 0; index < names.Length(); ++index) {
-        addFamily(names[index], index != sysLocIndex);
+        addFamily(names[index], index != static_cast<unsigned>(sysLocIndex));
       }
     }
   }

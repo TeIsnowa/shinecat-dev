@@ -316,7 +316,7 @@ pref("browser.startup.preXulSkeletonUI", true);
 #endif
 
 // Show an upgrade dialog on major upgrades.
-pref("browser.startup.upgradeDialog.enabled", true);
+pref("browser.startup.upgradeDialog.enabled", false);
 
 // Don't create the hidden window during startup on
 // platforms that don't always need it (Win/Linux).
@@ -341,6 +341,8 @@ pref("browser.warnOnQuit", true);
 #endif
 
 pref("browser.overlink-delay", 80);
+
+pref("browser.theme.colorway-closet", false);
 
 // Whether using `ctrl` when hitting return/enter in the URL bar
 // (or clicking 'go') should prefix 'www.' and suffix
@@ -2319,6 +2321,8 @@ pref("devtools.inspector.ruleview.inline-compatibility-warning.enabled", false);
 pref("devtools.inspector.compatibility.enabled", true);
 // Enable overflow debugging in the inspector.
 pref("devtools.overflow.debugging.enabled", true);
+// Enable drag to edit properties in the inspector rule view.
+pref("devtools.inspector.draggable_properties", true);
 
 // Grid highlighter preferences
 pref("devtools.gridinspector.gridOutlineMaxColumns", 50);
