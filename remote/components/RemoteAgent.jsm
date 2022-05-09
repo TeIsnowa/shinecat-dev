@@ -321,7 +321,8 @@ class RemoteAgentParentProcess {
           this.#allowHosts = this.handleAllowHostsFlag(subject);
           this.#allowOrigins = this.handleAllowOriginsFlag(subject);
 
-          Services.obs.addObserver(this, "sessionstore-windows-restored");
+          Services.obs.addObserver(this, "browser-idle-startup-tasks-finished");
+          Services.obs.addObserver(this, "mail-idle-startup-tasks-finished");
           Services.obs.addObserver(this, "quit-application");
 
           // With Bug 1717899 we will extend the lifetime of the Remote Agent to
@@ -358,10 +359,14 @@ class RemoteAgentParentProcess {
 
         break;
 
-      // For now only used in CDP to wait until all the application windows
-      // have been opened and fully restored.
-      case "sessionstore-windows-restored":
-        Services.obs.removeObserver(this, topic);
+      // Used to wait until the initial application window has been opened.
+      case "browser-idle-startup-tasks-finished":
+      case "mail-idle-startup-tasks-finished":
+        Services.obs.removeObserver(
+          this,
+          "browser-idle-startup-tasks-finished"
+        );
+        Services.obs.removeObserver(this, "mail-idle-startup-tasks-finished");
         this.#browserStartupFinished.resolve();
         break;
 
@@ -397,7 +402,9 @@ class RemoteAgentParentProcess {
                      which is a low-level remote debugging interface used for WebDriver
                      BiDi and CDP. Defaults to port 9222.
   --remote-allow-hosts <hosts> Values of the Host header to allow for incoming requests.
-  --remote-allow-origins <origins> Values of the Origin header to allow for incoming requests.\n`;
+                     Please read security guidelines at https://firefox-source-docs.mozilla.org/remote/Security.html
+  --remote-allow-origins <origins> Values of the Origin header to allow for incoming requests.
+                     Please read security guidelines at https://firefox-source-docs.mozilla.org/remote/Security.html\n`;
   }
 
   get QueryInterface() {

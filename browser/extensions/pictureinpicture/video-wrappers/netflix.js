@@ -8,7 +8,13 @@ class PictureInPictureVideoWrapper {
   constructor() {
     let netflixPlayerAPI = window.wrappedJSObject.netflix.appContext.state.playerApp.getAPI()
       .videoPlayer;
-    let sessionId = netflixPlayerAPI.getAllPlayerSessionIds()[0];
+    let sessionId = null;
+    for (let id of netflixPlayerAPI.getAllPlayerSessionIds()) {
+      if (id.startsWith("watch-")) {
+        sessionId = id;
+        break;
+      }
+    }
     this.player = netflixPlayerAPI.getVideoPlayerBySessionId(sessionId);
   }
   play() {
@@ -26,7 +32,7 @@ class PictureInPictureVideoWrapper {
       const callback = function(mutationsList, observer) {
         let textNodeList = container
           .querySelector(".player-timedtext")
-          ?.querySelectorAll("span");
+          ?.querySelectorAll("span > span");
         if (!textNodeList || textNodeList.length < 1) {
           updateCaptionsFunction("");
           return;

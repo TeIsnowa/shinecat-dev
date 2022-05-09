@@ -261,7 +261,7 @@ class NPZCSupport final
 #endif  // defined(DEBUG)
 
     // Use vsync for touch resampling on API level 19 and above.
-    // See gfxAndroidPlatform::CreateHardwareVsyncSource() for comparison.
+    // See gfxAndroidPlatform::CreateGlobalHardwareVsyncSource() for comparison.
     if (jni::GetAPIVersion() >= 19) {
       mAndroidVsync = AndroidVsync::GetInstance();
     }
@@ -1787,6 +1787,7 @@ nsWindow::nsWindow()
       mIsVisible(false),
       mParent(nullptr),
       mDynamicToolbarMaxHeight(0),
+      mSizeMode(nsSizeMode_Normal),
       mIsFullScreen(false),
       mCompositorWidgetDelegate(nullptr) {}
 
@@ -2110,7 +2111,7 @@ void nsWindow::SetSizeMode(nsSizeMode aMode) {
     return;
   }
 
-  nsBaseWidget::SetSizeMode(aMode);
+  mSizeMode = aMode;
 
   switch (aMode) {
     case nsSizeMode_Minimized:

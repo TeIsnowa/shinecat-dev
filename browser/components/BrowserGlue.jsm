@@ -1736,10 +1736,18 @@ BrowserGlue.prototype = {
   _setDefaultCookieBehavior() {
     let defaultPrefs = Services.prefs.getDefaultBranch("");
 
+    let hasCookieBehaviorPolicy = () =>
+      Services.policies.status == Services.policies.ACTIVE &&
+      Services.policies.getActivePolicies()?.Cookies?.Behavior;
+
     // For phase 2 we enable dFPI / TCP for all clients which are part of the
     // rollout.
-    if (NimbusFeatures.tcpByDefault.isEnabled()) {
-      Services.telemetry.scalarSet("privacy.dfpi_rollout_enabledByDefault", 3);
+    // Avoid overwriting cookie behavior set by enterprise policy.
+    if (NimbusFeatures.tcpByDefault.isEnabled() && !hasCookieBehaviorPolicy()) {
+      Services.telemetry.scalarSet(
+        "privacy.dfpi_rollout_tcpByDefault_feature",
+        true
+      );
 
       // Enable TCP by updating the default pref state for cookie behaviour. This
       // means we won't override user choice.
@@ -1750,6 +1758,10 @@ BrowserGlue.prototype = {
 
       return;
     }
+    Services.telemetry.scalarSet(
+      "privacy.dfpi_rollout_tcpByDefault_feature",
+      false
+    );
 
     // For the initial rollout of dFPI, set the default cookieBehavior based on the pref
     // set during onboarding when the user chooses to enable protections or not.
@@ -3356,7 +3368,7 @@ BrowserGlue.prototype = {
   _migrateUI: function BG__migrateUI() {
     // Use an increasing number to keep track of the current migration state.
     // Completely unrelated to the current Firefox release number.
-    const UI_VERSION = 126;
+    const UI_VERSION = 127;
     const BROWSER_DOCURL = AppConstants.BROWSER_CHROME_URL;
 
     const PROFILE_DIR = Services.dirsvc.get("ProfD", Ci.nsIFile).path;
@@ -4149,6 +4161,21 @@ BrowserGlue.prototype = {
           true
         );
       }
+    }
+
+    if (currentUIVersion < 127) {
+      // Bug 1767440 - Clean up rollout search param prefs.
+
+      let prefsToClear = {
+        "browser.search.param.google_channel_us": "tus7",
+        "browser.search.param.google_channel_row": "trow7",
+        "browser.search.param.bing_ptag": "MOZZ0000000031",
+      };
+      Object.entries(prefsToClear).forEach(([key, value]) => {
+        if (Services.prefs.getStringPref(key, null) == value) {
+          Services.prefs.clearUserPref(key);
+        }
+      });
     }
 
     // Update the migration version.

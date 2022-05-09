@@ -13,6 +13,7 @@
 
 #include "CompositorWidget.h"
 #include "MozContainer.h"
+#include "VsyncSource.h"
 #include "mozilla/EventForwards.h"
 #include "mozilla/Maybe.h"
 #include "mozilla/RefPtr.h"
@@ -161,6 +162,7 @@ class nsWindow final : public nsBaseWidget {
   bool IsEnabled() const override;
 
   void SetZIndex(int32_t aZIndex) override;
+  nsSizeMode SizeMode() override { return mSizeMode; }
   void SetSizeMode(nsSizeMode aMode) override;
   void GetWorkspaceID(nsAString& workspaceID) override;
   void MoveToWorkspace(const nsAString& workspaceID) override;
@@ -247,7 +249,7 @@ class nsWindow final : public nsBaseWidget {
 
   void SetProgress(unsigned long progressPercent);
 
-  RefPtr<mozilla::gfx::VsyncSource> GetVsyncSource() override;
+  RefPtr<mozilla::VsyncDispatcher> GetVsyncDispatcher() override;
   bool SynchronouslyRepaintOnResize() override;
 
   void OnDPIChanged(void);
@@ -526,6 +528,7 @@ class nsWindow final : public nsBaseWidget {
   // in some reasonable time when page content is not updated.
   int mCompositorPauseTimeoutID = 0;
 
+  nsSizeMode mSizeMode = nsSizeMode_Normal;
   nsSizeMode mSizeState = nsSizeMode_Normal;
   float mAspectRatio = 0.0f;
   float mAspectRatioSaved = 0.0f;
@@ -912,6 +915,7 @@ class nsWindow final : public nsBaseWidget {
 #endif
 #ifdef MOZ_WAYLAND
   RefPtr<mozilla::WaylandVsyncSource> mWaylandVsyncSource;
+  RefPtr<mozilla::VsyncDispatcher> mWaylandVsyncDispatcher;
   LayoutDeviceIntPoint mNativePointerLockCenter;
   zwp_locked_pointer_v1* mLockedPointer = nullptr;
   zwp_relative_pointer_v1* mRelativePointer = nullptr;

@@ -310,6 +310,7 @@ class BrowsertimeResultsHandler(PerftestResultsHandler):
         super(BrowsertimeResultsHandler, self).__init__(**config)
         self._root_results_dir = root_results_dir
         self.browsertime_visualmetrics = False
+        self.failed_vismets = []
         if not os.path.exists(self._root_results_dir):
             os.mkdir(self._root_results_dir)
 
@@ -350,6 +351,7 @@ class BrowsertimeResultsHandler(PerftestResultsHandler):
         measure,
         page_count,
         test_name,
+        accept_zero_vismet,
     ):
         """
         Receive a json blob that contains the results direct from the browsertime tool. Parse
@@ -564,26 +566,6 @@ class BrowsertimeResultsHandler(PerftestResultsHandler):
                 ]
                 results.append(power_result)
 
-            if self.browsertime_visualmetrics:
-                vismet_result = {
-                    "bt_ver": bt_ver,
-                    "browser": bt_browser,
-                    "url": bt_url,
-                    "name": "%s%s" % (test_name, extra),
-                    "measurements": {},
-                    "statistics": {},
-                }
-                for cycle in raw_result["visualMetrics"]:
-                    for metric in cycle:
-                        if "progress" in metric.lower():
-                            # Bug 1665750 - Determine if we should display progress
-                            continue
-                        vismet_result["measurements"].setdefault(metric, []).append(
-                            cycle[metric]
-                        )
-                vismet_result["statistics"] = raw_result["statistics"]["visualMetrics"]
-                results.append(vismet_result)
-
             custom_types = raw_result["extras"][0]
             if custom_types:
                 for custom_type in custom_types:
@@ -631,6 +613,27 @@ class BrowsertimeResultsHandler(PerftestResultsHandler):
                     bt_result["statistics"][bt] = _get_raptor_val(
                         raw_result["statistics"]["timings"], raptor, retval={}
                     )
+
+                if self.browsertime_visualmetrics:
+                    for cycle in raw_result["visualMetrics"]:
+                        for metric in cycle:
+                            if "progress" in metric.lower():
+                                # Bug 1665750 - Determine if we should display progress
+                                continue
+
+                            if metric not in measure:
+                                continue
+
+                            val = cycle[metric]
+                            if not accept_zero_vismet:
+                                if val == 0:
+                                    self.failed_vismets.append(metric)
+                                    continue
+
+                            bt_result["measurements"].setdefault(metric, []).append(val)
+                            bt_result["statistics"][metric] = raw_result["statistics"][
+                                "visualMetrics"
+                            ][metric]
 
             results.append(bt_result)
 
@@ -781,6 +784,7 @@ class BrowsertimeResultsHandler(PerftestResultsHandler):
                 test.get("measure"),
                 test_config.get("page_count", []),
                 test["name"],
+                accept_zero_vismet,
             ):
 
                 def _new_standard_result(new_result, subtest_unit="ms"):
@@ -876,6 +880,12 @@ class BrowsertimeResultsHandler(PerftestResultsHandler):
         output.summarize(test_names)
         success, out_perfdata = output.output(test_names)
 
+        if len(self.failed_vismets) > 0:
+            LOG.critical(
+                "TEST-UNEXPECTED-FAIL | Some visual metrics have an erroneous value of 0."
+            )
+            LOG.info("Visual metric tests failed: %s" % str(self.failed_vismets))
+
         validate_success = True
         if not self.gecko_profile:
             validate_success = self._validate_treeherder_data(output, out_perfdata)
@@ -901,7 +911,7 @@ class BrowsertimeResultsHandler(PerftestResultsHandler):
             with open(jobs_file, "w") as f:
                 f.write(json.dumps(jobs_json))
 
-        return success and validate_success
+        return (success and validate_success) and len(self.failed_vismets) == 0
 
 
 class MissingResultsError(Exception):

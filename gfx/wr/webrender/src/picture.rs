@@ -3707,6 +3707,8 @@ pub struct SurfaceInfo {
     pub world_scale_factors: (f32, f32),
     /// Local scale factors surface to raster transform
     pub local_scale: (f32, f32),
+    /// If true, allow snapping on this and child surfaces
+    pub allow_snapping: bool,
 }
 
 impl SurfaceInfo {
@@ -3718,6 +3720,7 @@ impl SurfaceInfo {
         device_pixel_scale: DevicePixelScale,
         world_scale_factors: (f32, f32),
         local_scale: (f32, f32),
+        allow_snapping: bool,
     ) -> Self {
         let map_surface_to_world = SpaceMapper::new_with_target(
             spatial_tree.root_reference_frame_index(),
@@ -3746,6 +3749,7 @@ impl SurfaceInfo {
             device_pixel_scale,
             world_scale_factors,
             local_scale,
+            allow_snapping,
         }
     }
 
@@ -3834,7 +3838,7 @@ impl SurfaceInfo {
 /// parameters etc for an off-screen surface
 struct SurfaceAllocInfo {
     task_size: DeviceIntSize,
-    unclipped: DeviceRect,
+    needs_scissor_rect: bool,
     clipped: DeviceRect,
     clipped_local: PictureRect,
     uv_rect_kind: UvRectKind,
@@ -4827,9 +4831,25 @@ impl PicturePrimitive {
                                         }
                                     }
 
+                                    // We know that we'll never need to sample > 300 device pixels outside the tile
+                                    // for blurring, so clamp the content rect here so that we don't try to allocate
+                                    // a really large surface in the case of a drop-shadow with large offset.
+                                    let max_content_rect = (tile.local_dirty_rect.cast_unit() * device_pixel_scale)
+                                        .inflate(
+                                            MAX_BLUR_RADIUS * BLUR_SAMPLE_SCALE,
+                                            MAX_BLUR_RADIUS * BLUR_SAMPLE_SCALE,
+                                        )
+                                        .round_out()
+                                        .to_i32();
+
                                     let content_device_rect = (local_content_rect.cast_unit() * device_pixel_scale)
                                         .round_out()
                                         .to_i32();
+
+                                    let content_device_rect = content_device_rect
+                                        .intersection(&max_content_rect)
+                                        .expect("bug: no intersection with tile dirty rect");
+
                                     let content_task_size = content_device_rect.size();
                                     let normalized_content_rect = content_task_size.into();
 
@@ -4842,7 +4862,7 @@ impl PicturePrimitive {
                                             content_task_size,
                                             RenderTaskKind::new_picture(
                                                 content_task_size,
-                                                tile_cache.current_tile_size.to_f32(),
+                                                true,
                                                 content_device_rect.min.to_f32(),
                                                 surface_spatial_node_index,
                                                 // raster == surface implicitly for picture cache tiles
@@ -4892,7 +4912,7 @@ impl PicturePrimitive {
                                             },
                                             RenderTaskKind::new_picture(
                                                 composite_task_size,
-                                                tile_cache.current_tile_size.to_f32(),
+                                                true,
                                                 content_origin,
                                                 surface_spatial_node_index,
                                                 // raster == surface implicitly for picture cache tiles
@@ -5110,7 +5130,7 @@ impl PicturePrimitive {
                                 surface_rects.task_size,
                                 RenderTaskKind::new_picture(
                                     surface_rects.task_size,
-                                    surface_rects.unclipped.size(),
+                                    surface_rects.needs_scissor_rect,
                                     device_rect.min,
                                     surface_spatial_node_index,
                                     raster_spatial_node_index,
@@ -5153,7 +5173,7 @@ impl PicturePrimitive {
                                 surface_rects.task_size,
                                 RenderTaskKind::new_picture(
                                     surface_rects.task_size,
-                                    surface_rects.unclipped.size(),
+                                    surface_rects.needs_scissor_rect,
                                     device_rect.min,
                                     surface_spatial_node_index,
                                     raster_spatial_node_index,
@@ -5294,7 +5314,7 @@ impl PicturePrimitive {
                                 task_size,
                                 RenderTaskKind::new_picture(
                                     task_size,
-                                    surface_rects.unclipped.size(),
+                                    surface_rects.needs_scissor_rect,
                                     surface_rects.clipped.min,
                                     surface_spatial_node_index,
                                     raster_spatial_node_index,
@@ -5323,7 +5343,7 @@ impl PicturePrimitive {
                                 surface_rects.task_size,
                                 RenderTaskKind::new_picture(
                                     surface_rects.task_size,
-                                    surface_rects.unclipped.size(),
+                                    surface_rects.needs_scissor_rect,
                                     surface_rects.clipped.min,
                                     surface_spatial_node_index,
                                     raster_spatial_node_index,
@@ -5352,7 +5372,7 @@ impl PicturePrimitive {
                                 surface_rects.task_size,
                                 RenderTaskKind::new_picture(
                                     surface_rects.task_size,
-                                    surface_rects.unclipped.size(),
+                                    surface_rects.needs_scissor_rect,
                                     surface_rects.clipped.min,
                                     surface_spatial_node_index,
                                     raster_spatial_node_index,
@@ -5382,7 +5402,7 @@ impl PicturePrimitive {
                                 surface_rects.task_size,
                                 RenderTaskKind::new_picture(
                                     surface_rects.task_size,
-                                    surface_rects.unclipped.size(),
+                                    surface_rects.needs_scissor_rect,
                                     surface_rects.clipped.min,
                                     surface_spatial_node_index,
                                     raster_spatial_node_index,
@@ -5411,7 +5431,7 @@ impl PicturePrimitive {
                                 surface_rects.task_size,
                                 RenderTaskKind::new_picture(
                                     surface_rects.task_size,
-                                    surface_rects.unclipped.size(),
+                                    surface_rects.needs_scissor_rect,
                                     surface_rects.clipped.min,
                                     surface_spatial_node_index,
                                     raster_spatial_node_index,
@@ -5752,7 +5772,7 @@ impl PicturePrimitive {
                 // If a raster root is established, this surface should be scaled based on the scale factors of the surface raster to parent raster transform.
                 // This scaling helps ensure that the content in this surface does not become blurry or pixelated when composited in the parent surface.
 
-                let world_scale_factors = match parent_surface_index {
+                let (world_scale_factors, parent_allows_snapping) = match parent_surface_index {
                     Some(parent_surface_index) => {
                         let parent_surface = &surfaces[parent_surface_index.0];
 
@@ -5775,10 +5795,12 @@ impl PicturePrimitive {
                             local_to_surface.scale_factors()
                         };
 
-                        (
+                        let scale_factors = (
                             scale_factors.0 * parent_surface.world_scale_factors.0,
                             scale_factors.1 * parent_surface.world_scale_factors.1,
-                        )
+                        );
+
+                        (scale_factors, parent_surface.allow_snapping)
                     }
                     None => {
                         let local_to_surface_scale_factors = frame_context
@@ -5789,13 +5811,24 @@ impl PicturePrimitive {
                             )
                             .scale_factors();
 
-                        (
+                        let scale_factors = (
                             local_to_surface_scale_factors.0,
                             local_to_surface_scale_factors.1,
-                        )
+                        );
 
+                        (scale_factors, true)
                     }
                 };
+
+                // TODO(gw): For now, we disable snapping on any sub-graph, as that implies
+                //           that the spatial / raster node must be the same as the parent
+                //           surface. In future, we may be able to support snapping in these
+                //           cases (if it's even useful?) or perhaps add a ENABLE_SNAPPING
+                //           picture flag, if the IS_SUB_GRAPH is ever useful in a different
+                //           context.
+                let allow_snapping =
+                    parent_allows_snapping &&
+                    !self.flags.contains(PictureFlags::IS_SUB_GRAPH);
 
                 // Check if there is perspective or if an SVG filter is applied, and thus whether a new
                 // rasterization root should be established.
@@ -5844,6 +5877,7 @@ impl PicturePrimitive {
                         let surface_spatial_node = frame_context.spatial_tree.get_spatial_node(surface_spatial_node_index);
 
                         let enable_snapping =
+                            allow_snapping &&
                             surface_spatial_node.coordinate_system_id == CoordinateSystemId::root() &&
                             surface_spatial_node.snapping_transform.is_some();
 
@@ -5883,6 +5917,7 @@ impl PicturePrimitive {
                     device_pixel_scale,
                     world_scale_factors,
                     local_scale,
+                    allow_snapping,
                 );
 
                 let surface_index = SurfaceIndex(surfaces.len());
@@ -6938,9 +6973,17 @@ fn get_surface_rects(
         return None;
     }
 
+    // If the final clipped surface rect is not the same or larger as the unclipped
+    // local rect of the surface, we need to enable scissor rect (which disables
+    // merging batches between this and other render tasks allocated to the same
+    // render target). This is conservative - we could do better in future by
+    // distinguishing between clips that affect the surface itself vs. clips on
+    // child primitives that don't affect this.
+    let needs_scissor_rect = !clipped_local.contains_box(&surface.unclipped_local_rect);
+
     Some(SurfaceAllocInfo {
         task_size,
-        unclipped,
+        needs_scissor_rect,
         clipped,
         clipped_local,
         uv_rect_kind,
@@ -7009,6 +7052,7 @@ fn test_large_surface_scale_1() {
             device_pixel_scale: DevicePixelScale::new(1.0),
             world_scale_factors: (1.0, 1.0),
             local_scale: (1.0, 1.0),
+            allow_snapping: true,
         },
         SurfaceInfo {
             unclipped_local_rect: PictureRect::new(
@@ -7024,6 +7068,7 @@ fn test_large_surface_scale_1() {
             device_pixel_scale: DevicePixelScale::new(43.82798767089844),
             world_scale_factors: (1.0, 1.0),
             local_scale: (1.0, 1.0),
+            allow_snapping: true,
         },
     ];
 

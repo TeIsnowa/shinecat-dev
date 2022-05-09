@@ -325,6 +325,10 @@
 #  include "mozilla/CodeCoverageHandler.h"
 #endif
 
+#ifdef FUZZING_SNAPSHOT
+#  include "mozilla/fuzzing/IPCFuzzController.h"
+#endif
+
 // For VP9Benchmark::sBenchmarkFpsPref
 #include "Benchmark.h"
 
@@ -4142,8 +4146,8 @@ void ContentParent::HandleOrphanedMinidump(nsString* aDumpId) {
     CrashReporterHost::RecordCrash(GeckoProcessType_Content,
                                    nsICrashService::CRASH_TYPE_CRASH, *aDumpId);
   } else {
-    NS_WARNING(nsPrintfCString("content process pid = %d crashed without "
-                               "leaving a minidump behind",
+    NS_WARNING(nsPrintfCString("content process pid = %" PRIPID
+                               " crashed without leaving a minidump behind",
                                OtherPid())
                    .get());
   }
@@ -7752,6 +7756,14 @@ IPCResult ContentParent::RecvGetSystemIcon(nsIURI* aURI,
       "platforms");
 #endif
 }
+
+#ifdef FUZZING_SNAPSHOT
+IPCResult ContentParent::RecvSignalFuzzingReady() {
+  // No action needed here, we already observe this message directly
+  // on the channel and act accordingly.
+  return IPC_OK();
+}
+#endif
 
 }  // namespace dom
 }  // namespace mozilla

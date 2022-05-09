@@ -11,9 +11,10 @@
             SYNC_USERNAME_PREF, SYNC_ADDRESSES_PREF, SYNC_CREDITCARDS_PREF, SYNC_CREDITCARDS_AVAILABLE_PREF, CREDITCARDS_USED_STATUS_PREF,
             sleep, waitForStorageChangedEvents, waitForAutofill, focusUpdateSubmitForm, runAndWaitForAutocompletePopupOpen,
             openPopupOn, openPopupForSubframe, closePopup, closePopupForSubframe,
-            clickDoorhangerButton, getAddresses, saveAddress, removeAddresses, saveCreditCard,
+            clickDoorhangerButton, getAddresses, saveAddress, removeAddresses, saveCreditCard, setStorage,
             getDisplayedPopupItems, getDoorhangerCheckbox, waitForPopupEnabled,
-            getNotification, promiseNotificationShown, getDoorhangerButton, removeAllRecords, expectWarningText, testDialog */
+            getNotification, waitForPopupShown, getDoorhangerButton, removeAllRecords, expectWarningText, testDialog,
+            TIMEOUT_ENSURE_PROFILE_NOT_SAVED */
 
 "use strict";
 
@@ -191,6 +192,11 @@ const TEST_CREDIT_CARD_5 = {
 const MAIN_BUTTON = "button";
 const SECONDARY_BUTTON = "secondaryButton";
 const MENU_BUTTON = "menubutton";
+
+/**
+ * Collection of timeouts that are used to ensure something should not happen.
+ */
+const TIMEOUT_ENSURE_PROFILE_NOT_SAVED = 1000;
 
 function getDisplayedPopupItems(
   browser,
@@ -458,6 +464,7 @@ async function runAndWaitForAutocompletePopupOpen(browser, taskFn) {
           return (
             (item.getAttribute("originaltype") == "autofill-profile" ||
               item.getAttribute("originaltype") == "autofill-insecureWarning" ||
+              item.getAttribute("originaltype") == "autofill-clear-button" ||
               item.getAttribute("originaltype") == "autofill-footer") &&
             item.hasAttribute("formautofillattached")
           );
@@ -640,7 +647,7 @@ function getNotification(index = 0) {
   return notifications[index];
 }
 
-function promiseNotificationShown() {
+function waitForPopupShown() {
   return BrowserTestUtils.waitForEvent(PopupNotifications.panel, "popupshown");
 }
 
@@ -757,6 +764,22 @@ async function testDialog(url, testFn, arg = undefined) {
   let unloadPromise = BrowserTestUtils.waitForEvent(win, "unload");
   await testFn(win);
   return unloadPromise;
+}
+
+/**
+ * Initializes the test storage for a task.
+ *
+ * @param {...Object} items Can either be credit card or address objects
+ */
+async function setStorage(...items) {
+  await removeAllRecords();
+  for (let item of items) {
+    if (item["cc-number"]) {
+      await saveCreditCard(item);
+    } else {
+      await saveAddress(item);
+    }
+  }
 }
 
 add_setup(function() {

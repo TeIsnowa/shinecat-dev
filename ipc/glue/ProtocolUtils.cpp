@@ -35,6 +35,10 @@
 #  include "sddl.h"
 #endif
 
+#ifdef FUZZING_SNAPSHOT
+#  include "mozilla/fuzzing/IPCFuzzController.h"
+#endif
+
 using namespace IPC;
 
 using base::GetCurrentProcId;
@@ -120,7 +124,7 @@ void LogMessageForProtocol(const char* aTopLevelProtocol,
                            const char* aContextDescription, uint32_t aMessageId,
                            MessageDirection aDirection) {
   nsPrintfCString logMessage(
-      "[time: %" PRId64 "][%d%s%d] [%s] %s %s\n", PR_Now(),
+      "[time: %" PRId64 "][%" PRIPID "%s%" PRIPID "] [%s] %s %s\n", PR_Now(),
       base::GetCurrentProcId(),
       aDirection == MessageDirection::eReceiving ? "<-" : "->", aOtherPid,
       aTopLevelProtocol, aContextDescription,
@@ -511,6 +515,10 @@ void IProtocol::ActorConnected() {
   if (mLinkStatus != LinkStatus::Inactive) {
     return;
   }
+
+#ifdef FUZZING_SNAPSHOT
+  fuzzing::IPCFuzzController::instance().OnActorConnected(this);
+#endif
 
   mLinkStatus = LinkStatus::Connected;
 

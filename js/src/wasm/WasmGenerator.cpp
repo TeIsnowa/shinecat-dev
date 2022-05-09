@@ -57,9 +57,7 @@ bool CompiledCode::swap(MacroAssembler& masm) {
   callSiteTargets.swap(masm.callSiteTargets());
   trapSites.swap(masm.trapSites());
   symbolicAccesses.swap(masm.symbolicAccesses());
-#ifdef ENABLE_WASM_EXCEPTIONS
   tryNotes.swap(masm.tryNotes());
-#endif
   codeLabels.swap(masm.codeLabels());
   return true;
 }
@@ -274,14 +272,12 @@ bool ModuleGenerator::init(Metadata* maybeAsmJSMetadata) {
     }
   }
 
-#ifdef ENABLE_WASM_EXCEPTIONS
   for (TagDesc& tag : moduleEnv_->tags) {
     if (!allocateGlobalBytes(sizeof(WasmTagObject*), sizeof(void*),
                              &tag.globalDataOffset)) {
       return false;
     }
   }
-#endif
 
   if (!isAsmJS()) {
     // Copy type definitions to metadata that are required at runtime,
@@ -682,14 +678,12 @@ bool ModuleGenerator::linkCompiledCode(CompiledCode& code) {
     }
   }
 
-#ifdef ENABLE_WASM_EXCEPTIONS
   auto tryNoteOp = [=](uint32_t, WasmTryNote* tn) {
     tn->offsetBy(offsetInModule);
   };
   if (!AppendForEach(&metadataTier_->tryNotes, code.tryNotes, tryNoteOp)) {
     return false;
   }
-#endif
 
   return true;
 }
@@ -940,9 +934,7 @@ bool ModuleGenerator::finishCodegen() {
   MOZ_ASSERT(masm_.callSiteTargets().empty());
   MOZ_ASSERT(masm_.trapSites().empty());
   MOZ_ASSERT(masm_.symbolicAccesses().empty());
-#ifdef ENABLE_WASM_EXCEPTIONS
   MOZ_ASSERT(masm_.tryNotes().empty());
-#endif
   MOZ_ASSERT(masm_.codeLabels().empty());
 
   masm_.finish();
@@ -952,17 +944,15 @@ bool ModuleGenerator::finishCodegen() {
 bool ModuleGenerator::finishMetadataTier() {
   // The stackmaps aren't yet sorted.  Do so now, since we'll need to
   // binary-search them at GC time.
-  metadataTier_->stackMaps.sort();
+  metadataTier_->stackMaps.finishAndSort();
 
   // The try notes also need to be sorted to simplify lookup.
-#ifdef ENABLE_WASM_EXCEPTIONS
   std::sort(metadataTier_->tryNotes.begin(), metadataTier_->tryNotes.end());
-#endif
 
 #ifdef DEBUG
   // Check that the stackmap contains no duplicates, since that could lead to
   // ambiguities about stack slot pointerness.
-  uint8_t* previousNextInsnAddr = nullptr;
+  const uint8_t* previousNextInsnAddr = nullptr;
   for (size_t i = 0; i < metadataTier_->stackMaps.length(); i++) {
     const StackMaps::Maplet& maplet = metadataTier_->stackMaps.get(i);
     MOZ_ASSERT_IF(i > 0, uintptr_t(maplet.nextInsnAddr) >
@@ -993,14 +983,12 @@ bool ModuleGenerator::finishMetadataTier() {
 
   // Try notes should be sorted so that the end of ranges are in rising order
   // so that the innermost catch handler is chosen.
-#  ifdef ENABLE_WASM_EXCEPTIONS
   last = 0;
   for (const WasmTryNote& tryNote : metadataTier_->tryNotes) {
     MOZ_ASSERT(tryNote.end >= last);
     MOZ_ASSERT(tryNote.end > tryNote.begin);
     last = tryNote.end;
   }
-#  endif
 #endif
 
   // These Vectors can get large and the excess capacity can be significant,
@@ -1010,9 +998,7 @@ bool ModuleGenerator::finishMetadataTier() {
   metadataTier_->codeRanges.shrinkStorageToFit();
   metadataTier_->callSites.shrinkStorageToFit();
   metadataTier_->trapSites.shrinkStorageToFit();
-#ifdef ENABLE_WASM_EXCEPTIONS
   metadataTier_->tryNotes.shrinkStorageToFit();
-#endif
   for (Trap trap : MakeEnumeratedRange(Trap::Limit)) {
     metadataTier_->trapSites[trap].shrinkStorageToFit();
   }
@@ -1092,9 +1078,7 @@ SharedMetadata ModuleGenerator::finishMetadata(const Bytes& bytecode) {
   metadata_->startFuncIndex = moduleEnv_->startFuncIndex;
   metadata_->tables = std::move(moduleEnv_->tables);
   metadata_->globals = std::move(moduleEnv_->globals);
-#ifdef ENABLE_WASM_EXCEPTIONS
   metadata_->tags = std::move(moduleEnv_->tags);
-#endif
   metadata_->nameCustomSectionIndex = moduleEnv_->nameCustomSectionIndex;
   metadata_->moduleName = moduleEnv_->moduleName;
   metadata_->funcNames = std::move(moduleEnv_->funcNames);
@@ -1230,10 +1214,38 @@ SharedModule ModuleGenerator::finishModule(
     return nullptr;
   }
 
+  if (!isAsmJS() && compileArgs_->features.testSerialization) {
+    MOZ_RELEASE_ASSERT(mode() == CompileMode::Once &&
+                       tier() == Tier::Serialized);
+
+    Bytes serializedBytes;
+    if (!module->serialize(*linkData_, &serializedBytes)) {
+      return nullptr;
+    }
+
+    MutableModule deserializedModule =
+        Module::deserialize(serializedBytes.begin(), serializedBytes.length());
+    if (!deserializedModule) {
+      return nullptr;
+    }
+    module = deserializedModule;
+
+    // Perform storeOptimizedEncoding here instead of below so we don't have to
+    // re-serialize the module.
+    if (maybeTier2Listener) {
+      maybeTier2Listener->storeOptimizedEncoding(serializedBytes.begin(),
+                                                 serializedBytes.length());
+      maybeTier2Listener = nullptr;
+    }
+  }
+
   if (mode() == CompileMode::Tier1) {
     module->startTier2(*compileArgs_, bytecode, maybeTier2Listener);
   } else if (tier() == Tier::Serialized && maybeTier2Listener) {
-    module->serialize(*linkData_, *maybeTier2Listener);
+    Bytes bytes;
+    if (module->serialize(*linkData_, &bytes)) {
+      maybeTier2Listener->storeOptimizedEncoding(bytes.begin(), bytes.length());
+    }
   }
 
   return module;
@@ -1290,9 +1302,7 @@ size_t CompiledCode::sizeOfExcludingThis(
          callSites.sizeOfExcludingThis(mallocSizeOf) +
          callSiteTargets.sizeOfExcludingThis(mallocSizeOf) + trapSitesSize +
          symbolicAccesses.sizeOfExcludingThis(mallocSizeOf) +
-#ifdef ENABLE_WASM_EXCEPTIONS
          tryNotes.sizeOfExcludingThis(mallocSizeOf) +
-#endif
          codeLabels.sizeOfExcludingThis(mallocSizeOf);
 }
 

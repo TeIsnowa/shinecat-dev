@@ -175,8 +175,8 @@ static BrowserChildMap* sBrowserChildren;
 StaticMutex sBrowserChildrenMutex;
 
 already_AddRefed<Document> BrowserChild::GetTopLevelDocument() const {
-  nsCOMPtr<Document> doc;
-  WebNavigation()->GetDocument(getter_AddRefs(doc));
+  nsCOMPtr<nsIDocShell> docShell = do_GetInterface(WebNavigation());
+  nsCOMPtr<Document> doc = docShell ? docShell->GetExtantDocument() : nullptr;
   return doc.forget();
 }
 
@@ -539,6 +539,7 @@ NS_IMPL_CYCLE_COLLECTION_UNLINK_BEGIN(BrowserChild)
   NS_IMPL_CYCLE_COLLECTION_UNLINK(mWebNav)
   NS_IMPL_CYCLE_COLLECTION_UNLINK(mBrowsingContext)
   NS_IMPL_CYCLE_COLLECTION_UNLINK(mSessionStoreChild)
+  NS_IMPL_CYCLE_COLLECTION_UNLINK(mContentTransformPromise)
   NS_IMPL_CYCLE_COLLECTION_UNLINK_WEAK_REFERENCE
 NS_IMPL_CYCLE_COLLECTION_UNLINK_END
 
@@ -548,6 +549,7 @@ NS_IMPL_CYCLE_COLLECTION_TRAVERSE_BEGIN(BrowserChild)
   NS_IMPL_CYCLE_COLLECTION_TRAVERSE(mWebNav)
   NS_IMPL_CYCLE_COLLECTION_TRAVERSE(mBrowsingContext)
   NS_IMPL_CYCLE_COLLECTION_TRAVERSE(mSessionStoreChild)
+  NS_IMPL_CYCLE_COLLECTION_TRAVERSE(mContentTransformPromise)
 NS_IMPL_CYCLE_COLLECTION_TRAVERSE_END
 
 NS_IMPL_CYCLE_COLLECTION_TRACE_BEGIN(BrowserChild)
@@ -1299,6 +1301,11 @@ mozilla::ipc::IPCResult BrowserChild::RecvChildToParentMatrix(
       LayoutDeviceToLayoutDeviceMatrix4x4::FromUnknownMatrix(aMatrix);
   mTopLevelViewportVisibleRectInBrowserCoords =
       aTopLevelViewportVisibleRectInBrowserCoords;
+
+  if (mContentTransformPromise) {
+    mContentTransformPromise->MaybeResolveWithUndefined();
+    mContentTransformPromise = nullptr;
+  }
 
   // Trigger an intersection observation update since ancestor viewports
   // changed.
@@ -3168,8 +3175,9 @@ void BrowserChild::ReinitRendering() {
     lm->SetLayersObserverEpoch(mLayersObserverEpoch);
   }
 
-  nsCOMPtr<Document> doc(GetTopLevelDocument());
-  doc->NotifyLayerManagerRecreated();
+  if (nsCOMPtr<Document> doc = GetTopLevelDocument()) {
+    doc->NotifyLayerManagerRecreated();
+  }
 
   if (mRenderLayers) {
     SchedulePaint();
@@ -3217,16 +3225,13 @@ void BrowserChild::NotifyJankedAnimations(
 
 mozilla::ipc::IPCResult BrowserChild::RecvUIResolutionChanged(
     const float& aDpi, const int32_t& aRounding, const double& aScale) {
-  nsCOMPtr<Document> document(GetTopLevelDocument());
-  if (!document) {
-    return IPC_OK();
-  }
-
   ScreenIntSize oldScreenSize = GetInnerSize();
   if (aDpi > 0) {
     mPuppetWidget->UpdateBackingScaleCache(aDpi, aRounding, aScale);
   }
-  RefPtr<nsPresContext> presContext = document->GetPresContext();
+  nsCOMPtr<Document> document(GetTopLevelDocument());
+  RefPtr<nsPresContext> presContext =
+      document ? document->GetPresContext() : nullptr;
   if (presContext) {
     presContext->UIResolutionChangedSync();
   }
@@ -3847,6 +3852,28 @@ void BrowserChild::NotifyContentBlockingEvent(
         aEvent, requestData, aBlocked, PromiseFlatCString(aTrackingOrigin),
         aTrackingFullHashes, aReason);
   }
+}
+
+NS_IMETHODIMP
+BrowserChild::ContentTransformsReceived(JSContext* aCx,
+                                        dom::Promise** aPromise) {
+  auto* globalObject = xpc::CurrentNativeGlobal(aCx);
+  ErrorResult rv;
+  if (mChildToParentConversionMatrix) {
+    // Already received content transforms
+    RefPtr<Promise> promise =
+        Promise::CreateResolvedWithUndefined(globalObject, rv);
+    promise.forget(aPromise);
+    return rv.StealNSResult();
+  }
+
+  if (!mContentTransformPromise) {
+    mContentTransformPromise = Promise::Create(globalObject, rv);
+  }
+
+  MOZ_ASSERT(globalObject == mContentTransformPromise->GetGlobalObject());
+  NS_IF_ADDREF(*aPromise = mContentTransformPromise);
+  return rv.StealNSResult();
 }
 
 BrowserChildMessageManager::BrowserChildMessageManager(

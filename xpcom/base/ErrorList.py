@@ -805,6 +805,19 @@ with modules["EDITOR"]:
     errors["NS_SUCCESS_EDITOR_ELEMENT_NOT_FOUND"] = SUCCESS(1)
     errors["NS_SUCCESS_EDITOR_FOUND_TARGET"] = SUCCESS(2)
 
+    # If most callers ignore error except serious error (like
+    # NS_ERROR_EDITOR_DESTROYED), this success code is useful.  E.g. such
+    # callers can do:
+    # nsresult rv = Foo();
+    # if (MOZ_UNLIKELY(NS_FAILED(rv))) {
+    #   NS_WARNING("Foo() failed");
+    #   return rv;
+    # }
+    # NS_WARNING_ASSERTION(
+    #   rv != NS_SUCCESS_EDITOR_BUT_IGNORED_TRIVIAL_ERROR,
+    #   "Foo() failed, but ignored");
+    errors["NS_SUCCESS_EDITOR_BUT_IGNORED_TRIVIAL_ERROR"] = SUCCESS(3)
+
 
 # =======================================================================
 # 18: NS_ERROR_MODULE_XPCONNECT
@@ -1149,7 +1162,8 @@ with modules["DOM_MEDIA"]:
     errors["NS_ERROR_DOM_MEDIA_CDM_ERR"] = FAILURE(13)
     errors["NS_ERROR_DOM_MEDIA_NEED_NEW_DECODER"] = FAILURE(14)
     errors["NS_ERROR_DOM_MEDIA_INITIALIZING_DECODER"] = FAILURE(15)
-    errors["NS_ERROR_DOM_MEDIA_REMOTE_DECODER_CRASHED_ERR"] = FAILURE(16)
+    errors["NS_ERROR_DOM_MEDIA_REMOTE_DECODER_CRASHED_RDD_OR_GPU_ERR"] = FAILURE(16)
+    errors["NS_ERROR_DOM_MEDIA_REMOTE_DECODER_CRASHED_UTILITY_ERR"] = FAILURE(17)
 
     # Internal platform-related errors
     errors["NS_ERROR_DOM_MEDIA_CUBEB_INITIALIZATION_ERR"] = FAILURE(101)

@@ -13,6 +13,7 @@
 #include "mozilla/a11y/RemoteAccessibleBase.h"
 #include "mozilla/a11y/RemoteAccessible.h"
 #include "mozilla/a11y/Role.h"
+#include "mozilla/BinarySearch.h"
 #include "mozilla/dom/Element.h"
 #include "mozilla/dom/BrowserParent.h"
 #include "mozilla/dom/CanonicalBrowsingContext.h"
@@ -191,20 +192,28 @@ Derived* RemoteAccessibleBase<Derived>::RemoteParent() const {
 
 template <class Derived>
 ENameValueFlag RemoteAccessibleBase<Derived>::Name(nsString& aName) const {
+  ENameValueFlag nameFlag = eNameOK;
   if (mCachedFields) {
     if (IsText()) {
       mCachedFields->GetAttribute(nsGkAtoms::text, aName);
       return eNameOK;
     }
+    auto cachedNameFlag =
+        mCachedFields->GetAttribute<int32_t>(nsGkAtoms::explicit_name);
+    if (cachedNameFlag) {
+      nameFlag = static_cast<ENameValueFlag>(*cachedNameFlag);
+    }
     if (mCachedFields->GetAttribute(nsGkAtoms::name, aName)) {
-      auto nameFlag =
-          mCachedFields->GetAttribute<int32_t>(nsGkAtoms::explicit_name);
       VERIFY_CACHE(CacheDomain::NameAndDescription);
-      return nameFlag ? static_cast<ENameValueFlag>(*nameFlag) : eNameOK;
+      return nameFlag;
     }
   }
 
-  return eNameOK;
+  MOZ_ASSERT(aName.IsEmpty());
+  if (nameFlag != eNoNameOnPurpose) {
+    aName.SetIsVoid(true);
+  }
+  return nameFlag;
 }
 
 template <class Derived>
@@ -1003,6 +1012,25 @@ bool RemoteAccessibleBase<Derived>::TableIsProbablyForLayout() {
     }
   }
   return false;
+}
+
+template <class Derived>
+const nsTArray<int32_t>&
+RemoteAccessibleBase<Derived>::GetCachedHyperTextOffsets() const {
+  if (mCachedFields) {
+    if (auto offsets =
+            mCachedFields->GetAttribute<nsTArray<int32_t>>(nsGkAtoms::offset)) {
+      return *offsets;
+    }
+  }
+  nsTArray<int32_t> newOffsets;
+  BuildCachedHyperTextOffsets(newOffsets);
+  if (!mCachedFields) {
+    const_cast<RemoteAccessibleBase<Derived>*>(this)->mCachedFields =
+        new AccAttributes();
+  }
+  mCachedFields->SetAttribute(nsGkAtoms::offset, std::move(newOffsets));
+  return *mCachedFields->GetAttribute<nsTArray<int32_t>>(nsGkAtoms::offset);
 }
 
 template class RemoteAccessibleBase<RemoteAccessible>;

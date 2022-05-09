@@ -13,18 +13,30 @@ exclude: true
 
 ⚠️  breaking change and deprecation notices
 
+## v102
+- Added [`DateTimePrompt.stepValue`][102.1] to export [`step`][102.2] attribute of input element.
+  ([bug 1499635]({{bugzilla}}1499635))
+- Deprecated [`onLocationChange(2)`][102.3], please use [`onLocationChange(3)`][102.4].
+
+[102.1]: {{javadoc_uri}}/GeckoSession.PromptDelegate.DateTimePrompt.html#stepValue
+[102.2]: https://developer.mozilla.org/en-US/docs/Web/HTML/Element/input/date#step
+[102.3]: {{javadoc_uri}}/GeckoSession.NavigationDelegate.html#onLocationChange(org.mozilla.geckoview.GeckoSession,java.lang.String)
+[102.4]: {{javadoc_uri}}/GeckoSession.NavigationDelegate.html#onLocationChange(org.mozilla.geckoview.GeckoSession,java.lang.String,java.util.List)
+
 ## v101
 - Added [`GeckoDisplay.surfaceChanged`][101.1] function taking new type [`GeckoDisplay.SurfaceInfo`][101.2].
   This allows the caller to provide a [`SurfaceControl`][101.3] object, which must be set on SDK level 29 and
   above when rendering in to a `SurfaceView`.
   ([bug 1762424]({{bugzilla}}1762424))
 - ⚠️ Deprecated old `GeckoDisplay.surfaceChanged` functions [[1]][101.4] [[2]][101.5].
+- Add [`WebExtensionController.optionalPrompt`][101.6] to allow handling of optional permission requests from extensions.
 
 [101.1]: {{javadoc_uri}}/GeckoDisplay.html#surfaceChanged(org.mozilla.geckoview.GeckoDisplay.SurfaceInfo)
 [101.2]: {{javadoc_uri}}/GeckoDisplay.SurfaceInfo.html
 [101.3]: https://developer.android.com/reference/android/view/SurfaceControl
 [101.4]: {{javadoc_uri}}/GeckoDisplay.html#surfaceChanged(android.view.Surface,int,int)
 [101.5]: {{javadoc_uri}}/GeckoDisplay.html#surfaceChanged(android.view.Surface,int,int,int,int)
+[101.6]: {{javadoc_uri}}/WebExtensionController.html#optionalPrompt(org.mozilla.geckoview.WebExtension.Message,org.mozilla.geckoview.WebExtension)
 
 ## v100
 - ⚠️ Changed [`GeckoSession.isOpen`][100.1] to `@UiThread`.
@@ -1164,4 +1176,4 @@ to allow adding gecko profiler markers.
 [65.24]: {{javadoc_uri}}/CrashReporter.html#sendCrashReport(android.content.Context,android.os.Bundle,java.lang.String)
 [65.25]: {{javadoc_uri}}/GeckoResult.html
 
-[api-version]: f05b7e0bc1dbbfe6f8aa189c552cd871d512e0f9
+[api-version]: 036203b3b292abd94071762009cf965908e40f04

@@ -1039,6 +1039,26 @@ static bool WasmCompileMode(JSContext* cx, unsigned argc, Value* vp) {
   return false;
 }
 
+static bool WasmBaselineDisabledByFeatures(JSContext* cx, unsigned argc,
+                                           Value* vp) {
+  CallArgs args = CallArgsFromVp(argc, vp);
+  bool isDisabled = false;
+  JSStringBuilder reason(cx);
+  if (!wasm::BaselineDisabledByFeatures(cx, &isDisabled, &reason)) {
+    return false;
+  }
+  if (isDisabled) {
+    JSString* result = reason.finishString();
+    if (!result) {
+      return false;
+    }
+    args.rval().setString(result);
+  } else {
+    args.rval().setBoolean(false);
+  }
+  return true;
+}
+
 static bool WasmCraneliftDisabledByFeatures(JSContext* cx, unsigned argc,
                                             Value* vp) {
   CallArgs args = CallArgsFromVp(argc, vp);
@@ -1725,7 +1745,7 @@ static bool DisassembleNative(JSContext* cx, unsigned argc, Value* vp) {
     }
 
     const Value& v2 =
-        fun->getExtendedSlot(FunctionExtended::WASM_INSTANCE_SLOT);
+        fun->getExtendedSlot(FunctionExtended::WASM_INSTANCE_OBJ_SLOT);
 
     WasmInstanceObject* instobj = &v2.toObject().as<WasmInstanceObject>();
     js::wasm::Instance& inst = instobj->instance();
@@ -8560,6 +8580,12 @@ JS_FOR_WASM_FEATURES(WASM_FEATURE, WASM_FEATURE, WASM_FEATURE)
 "  available if it is present in the executable and not disabled by switches\n"
 "  or runtime conditions.  At most one baseline and one optimizing compiler can\n"
 "  be available."),
+
+    JS_FN_HELP("wasmBaselineDisabledByFeatures", WasmBaselineDisabledByFeatures, 0, 0,
+"wasmBaselineDisabledByFeatures()",
+"  If some feature is enabled at compile-time or run-time that prevents baseline\n"
+"  from being used then this returns a truthy string describing the features that\n."
+"  are disabling it.  Otherwise it returns false."),
 
     JS_FN_HELP("wasmCraneliftDisabledByFeatures", WasmCraneliftDisabledByFeatures, 0, 0,
 "wasmCraneliftDisabledByFeatures()",

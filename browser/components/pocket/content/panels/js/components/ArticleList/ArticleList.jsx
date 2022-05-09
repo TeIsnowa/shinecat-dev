@@ -34,12 +34,31 @@ function Article(props) {
       : null;
   }
 
-  const { article, savedArticle, position, source, model, utmParams } = props;
+  const {
+    article,
+    savedArticle,
+    position,
+    source,
+    model,
+    utmParams,
+    openInPocketReader,
+  } = props;
+
   const url = new URL(article.url || article.resolved_url || "");
   const urlSearchParams = new URLSearchParams(utmParams);
+
+  if (
+    openInPocketReader &&
+    article.item_id &&
+    !url.href.match(/getpocket\.com\/read/)
+  ) {
+    url.href = `https://getpocket.com/read/${article.item_id}`;
+  }
+
   for (let [key, val] of urlSearchParams.entries()) {
     url.searchParams.set(key, val);
   }
+
   // Using array notation because there is a key titled `1` (`images` is an object)
   const thumbnail =
     article.thumbnail ||
@@ -51,6 +70,7 @@ function Article(props) {
     article.publisher ||
     article.domain_metadata?.name ||
     article.resolved_domain;
+
   return (
     <li className="stp_article_list_item">
       <ArticleUrl
@@ -94,6 +114,7 @@ function ArticleList(props) {
           source={props.source}
           model={props.model}
           utmParams={props.utmParams}
+          openInPocketReader={props.openInPocketReader}
         />
       ))}
     </ul>

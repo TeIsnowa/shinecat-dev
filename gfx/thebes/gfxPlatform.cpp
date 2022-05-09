@@ -36,6 +36,7 @@
 #include "mozilla/Unused.h"
 #include "mozilla/IntegerPrintfMacros.h"
 #include "mozilla/Base64.h"
+#include "mozilla/VsyncDispatcher.h"
 
 #include "mozilla/Logging.h"
 #include "mozilla/Components.h"
@@ -104,7 +105,8 @@
 #include "nsServiceManagerUtils.h"
 #include "nsTArray.h"
 #include "nsIObserverService.h"
-#include "nsIScreenManager.h"
+#include "mozilla/widget/Screen.h"
+#include "mozilla/widget/ScreenManager.h"
 #include "MainThreadUtils.h"
 
 #include "nsWeakReference.h"
@@ -165,8 +167,6 @@ using namespace mozilla::gfx;
 
 gfxPlatform* gPlatform = nullptr;
 static bool gEverInitialized = false;
-
-static int32_t gLastUsedFrameRate = -1;
 
 const ContentDeviceData* gContentDeviceInitData = nullptr;
 
@@ -780,16 +780,6 @@ WebRenderMemoryReporter::CollectReports(nsIHandleReportCallback* aHandleReport,
 #undef REPORT_INTERNER
 #undef REPORT_DATA_STORE
 
-static void FrameRatePrefChanged(const char* aPref, void*) {
-  int32_t newRate = gfxPlatform::ForceSoftwareVsync()
-                        ? gfxPlatform::GetSoftwareVsyncRate()
-                        : -1;
-  if (newRate != gLastUsedFrameRate) {
-    gLastUsedFrameRate = newRate;
-    gfxPlatform::ReInitFrameRate();
-  }
-}
-
 void gfxPlatform::Init() {
   MOZ_RELEASE_ASSERT(!XRE_IsGPUProcess(), "GFX: Not allowed in GPU process.");
   MOZ_RELEASE_ASSERT(!XRE_IsRDDProcess(), "GFX: Not allowed in RDD process.");
@@ -939,14 +929,19 @@ void gfxPlatform::Init() {
     nsAutoCString allowlist;
     Preferences::GetCString("gfx.offscreencanvas.domain-allowlist", allowlist);
     gfxVars::SetOffscreenCanvasDomainAllowlist(allowlist);
-  }
 
-  gLastUsedFrameRate = ForceSoftwareVsync() ? GetSoftwareVsyncRate() : -1;
-  Preferences::RegisterCallback(
-      FrameRatePrefChanged,
-      nsDependentCString(StaticPrefs::GetPrefName_layout_frame_rate()));
-  // Set up the vsync source for the parent process.
-  ReInitFrameRate();
+    // Create the global vsync source and dispatcher.
+    RefPtr<VsyncSource> vsyncSource =
+        gfxPlatform::ForceSoftwareVsync()
+            ? gPlatform->GetSoftwareVsyncSource()
+            : gPlatform->GetGlobalHardwareVsyncSource();
+    gPlatform->mVsyncDispatcher = new VsyncDispatcher(vsyncSource);
+
+    // Listen for layout.frame_rate pref changes.
+    Preferences::RegisterCallback(
+        gfxPlatform::ReInitFrameRate,
+        nsDependentCString(StaticPrefs::GetPrefName_layout_frame_rate()));
+  }
 
   // Create the sRGB to output display profile transforms. They can be accessed
   // off the main thread so we want to avoid a race condition.
@@ -1039,19 +1034,19 @@ void gfxPlatform::ReportTelemetry() {
                      "GFX: Only allowed to be called from parent process.");
 
   nsCOMPtr<nsIGfxInfo> gfxInfo = components::GfxInfo::Service();
-  nsTArray<uint32_t> displayWidths;
-  nsTArray<uint32_t> displayHeights;
-  gfxInfo->GetDisplayWidth(displayWidths);
-  gfxInfo->GetDisplayHeight(displayHeights);
 
-  uint32_t displayCount = displayWidths.Length();
-  uint32_t displayWidth = displayWidths.Length() > 0 ? displayWidths[0] : 0;
-  uint32_t displayHeight = displayHeights.Length() > 0 ? displayHeights[0] : 0;
-  Telemetry::ScalarSet(Telemetry::ScalarID::GFX_DISPLAY_COUNT, displayCount);
-  Telemetry::ScalarSet(Telemetry::ScalarID::GFX_DISPLAY_PRIMARY_HEIGHT,
-                       displayHeight);
-  Telemetry::ScalarSet(Telemetry::ScalarID::GFX_DISPLAY_PRIMARY_WIDTH,
-                       displayWidth);
+  {
+    auto& screenManager = widget::ScreenManager::GetSingleton();
+    const uint32_t screenCount = screenManager.CurrentScreenList().Length();
+    RefPtr<widget::Screen> primaryScreen = screenManager.GetPrimaryScreen();
+    const LayoutDeviceIntRect rect = primaryScreen->GetRect();
+
+    Telemetry::ScalarSet(Telemetry::ScalarID::GFX_DISPLAY_COUNT, screenCount);
+    Telemetry::ScalarSet(Telemetry::ScalarID::GFX_DISPLAY_PRIMARY_HEIGHT,
+                         uint32_t(rect.Height()));
+    Telemetry::ScalarSet(Telemetry::ScalarID::GFX_DISPLAY_PRIMARY_WIDTH,
+                         uint32_t(rect.Width()));
+  }
 
   nsString adapterDesc;
   gfxInfo->GetAdapterDescription(adapterDesc);
@@ -1238,10 +1233,19 @@ void gfxPlatform::Shutdown() {
   }
 
   if (XRE_IsParentProcess()) {
-    gPlatform->mVsyncSource->Shutdown();
+    if (gPlatform->mGlobalHardwareVsyncSource) {
+      gPlatform->mGlobalHardwareVsyncSource->Shutdown();
+    }
+    if (gPlatform->mSoftwareVsyncSource &&
+        gPlatform->mSoftwareVsyncSource !=
+            gPlatform->mGlobalHardwareVsyncSource) {
+      gPlatform->mSoftwareVsyncSource->Shutdown();
+    }
   }
 
-  gPlatform->mVsyncSource = nullptr;
+  gPlatform->mGlobalHardwareVsyncSource = nullptr;
+  gPlatform->mSoftwareVsyncSource = nullptr;
+  gPlatform->mVsyncDispatcher = nullptr;
 
   // Shut down the default GL context provider.
   GLContextProvider::Shutdown();
@@ -2978,6 +2982,22 @@ bool gfxPlatform::UsesOffMainThreadCompositing() {
   return result;
 }
 
+RefPtr<mozilla::VsyncDispatcher> gfxPlatform::GetGlobalVsyncDispatcher() {
+  MOZ_ASSERT(mVsyncDispatcher,
+             "mVsyncDispatcher should have been initialized by ReInitFrameRate "
+             "during gfxPlatform init");
+  MOZ_ASSERT(XRE_IsParentProcess());
+  return mVsyncDispatcher;
+}
+
+already_AddRefed<mozilla::gfx::VsyncSource>
+gfxPlatform::GetGlobalHardwareVsyncSource() {
+  if (!mGlobalHardwareVsyncSource) {
+    mGlobalHardwareVsyncSource = CreateGlobalHardwareVsyncSource();
+  }
+  return do_AddRef(mGlobalHardwareVsyncSource);
+}
+
 /***
  * The preference "layout.frame_rate" has 3 meanings depending on the value:
  *
@@ -2987,9 +3007,13 @@ bool gfxPlatform::UsesOffMainThreadCompositing() {
  *  X = Software vsync at a rate of X times per second.
  */
 already_AddRefed<mozilla::gfx::VsyncSource>
-gfxPlatform::CreateHardwareVsyncSource() {
-  RefPtr<mozilla::gfx::VsyncSource> softwareVsync = new SoftwareVsyncSource();
-  return softwareVsync.forget();
+gfxPlatform::GetSoftwareVsyncSource() {
+  if (!mSoftwareVsyncSource) {
+    double rateInMS = 1000.0 / (double)gfxPlatform::GetSoftwareVsyncRate();
+    mSoftwareVsyncSource = new mozilla::gfx::SoftwareVsyncSource(
+        TimeDuration::FromMilliseconds(rateInMS));
+  }
+  return do_AddRef(mSoftwareVsyncSource);
 }
 
 /* static */
@@ -3020,23 +3044,23 @@ int gfxPlatform::GetSoftwareVsyncRate() {
 int gfxPlatform::GetDefaultFrameRate() { return 60; }
 
 /* static */
-void gfxPlatform::ReInitFrameRate() {
-  if (XRE_IsParentProcess()) {
-    RefPtr<VsyncSource> oldSource = gPlatform->mVsyncSource;
+void gfxPlatform::ReInitFrameRate(const char* aPrefIgnored,
+                                  void* aDataIgnored) {
+  MOZ_RELEASE_ASSERT(XRE_IsParentProcess());
 
-    // Start a new one:
-    if (gfxPlatform::ForceSoftwareVsync()) {
-      gPlatform->mVsyncSource =
-          (gPlatform)->gfxPlatform::CreateHardwareVsyncSource();
-    } else {
-      gPlatform->mVsyncSource = gPlatform->CreateHardwareVsyncSource();
-    }
-    // Tidy up old vsync source.
-    if (oldSource) {
-      oldSource->MoveListenersToNewSource(gPlatform->mVsyncSource);
-      oldSource->Shutdown();
-    }
+  if (gPlatform->mSoftwareVsyncSource) {
+    // Update the rate of the existing software vsync source.
+    double rateInMS = 1000.0 / (double)gfxPlatform::GetSoftwareVsyncRate();
+    gPlatform->mSoftwareVsyncSource->SetVsyncRate(
+        TimeDuration::FromMilliseconds(rateInMS));
   }
+
+  // Swap out the dispatcher's underlying source.
+  RefPtr<VsyncSource> vsyncSource =
+      gfxPlatform::ForceSoftwareVsync()
+          ? gPlatform->GetSoftwareVsyncSource()
+          : gPlatform->GetGlobalHardwareVsyncSource();
+  gPlatform->mVsyncDispatcher->SetVsyncSource(vsyncSource);
 }
 
 const char* gfxPlatform::GetAzureCanvasBackend() const {
@@ -3180,18 +3204,19 @@ void gfxPlatform::GetCMSSupportInfo(mozilla::widget::InfoObject& aObj) {
 }
 
 void gfxPlatform::GetDisplayInfo(mozilla::widget::InfoObject& aObj) {
-  nsCOMPtr<nsIGfxInfo> gfxInfo = components::GfxInfo::Service();
+  auto& screens = widget::ScreenManager::GetSingleton().CurrentScreenList();
+  aObj.DefineProperty("DisplayCount", screens.Length());
 
-  nsTArray<nsString> displayInfo;
-  auto rv = gfxInfo->GetDisplayInfo(displayInfo);
-  if (NS_SUCCEEDED(rv)) {
-    size_t displayCount = displayInfo.Length();
-    aObj.DefineProperty("DisplayCount", displayCount);
+  size_t i = 0;
+  for (auto& screen : screens) {
+    const LayoutDeviceIntRect rect = screen->GetRect();
+    nsPrintfCString value("%dx%d@%dHz scales:%f|%f", rect.width, rect.height,
+                          screen->GetRefreshRate(),
+                          screen->GetContentsScaleFactor(),
+                          screen->GetDefaultCSSScaleFactor());
 
-    for (size_t i = 0; i < displayCount; i++) {
-      nsPrintfCString name("Display%zu", i);
-      aObj.DefineProperty(name.get(), displayInfo[i]);
-    }
+    aObj.DefineProperty(nsPrintfCString("Display%zu", i++).get(),
+                        NS_ConvertUTF8toUTF16(value));
   }
 
   // Platform display info is only currently used for about:support and getting
@@ -3229,9 +3254,9 @@ void gfxPlatform::NotifyFrameStats(nsTArray<FrameStats>&& aFrameStats) {
 
 /*static*/
 uint32_t gfxPlatform::TargetFrameRate() {
-  if (gPlatform && gPlatform->mVsyncSource) {
+  if (gPlatform && gPlatform->mVsyncDispatcher) {
     return round(1000.0 /
-                 gPlatform->mVsyncSource->GetVsyncRate().ToMilliseconds());
+                 gPlatform->mVsyncDispatcher->GetVsyncRate().ToMilliseconds());
   }
   return 0;
 }

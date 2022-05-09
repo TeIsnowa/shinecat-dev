@@ -1816,7 +1816,8 @@ static bool ShouldHaveRoundedMenuDropShadow(nsWindow* aWindow) {
 // XXX this is apparently still needed in Windows 7 and later
 void nsWindow::ClearThemeRegion() {
   if (mWindowType == eWindowType_popup &&
-      (mPopupType == ePopupTypeMenu || mPopupType == ePopupTypePanel) &&
+      (mPopupType == ePopupTypeTooltip || mPopupType == ePopupTypeMenu ||
+       mPopupType == ePopupTypePanel) &&
       ShouldHaveRoundedMenuDropShadow(this)) {
     SetWindowRgn(mWnd, nullptr, false);
   } else if (!HasGlass() &&
@@ -1830,16 +1831,14 @@ void nsWindow::ClearThemeRegion() {
 void nsWindow::SetThemeRegion() {
   // Clip the window to the rounded rect area of the popup if needed.
   if (mWindowType == eWindowType_popup &&
-      (mPopupType == ePopupTypeMenu || mPopupType == ePopupTypePanel)) {
-    nsView* view = nsView::GetViewFor(this);
-    if (view) {
-      LayoutDeviceIntSize size =
+      (mPopupType == ePopupTypeTooltip || mPopupType == ePopupTypeMenu ||
+       mPopupType == ePopupTypePanel)) {
+    if (nsView* view = nsView::GetViewFor(this)) {
+      LayoutDeviceSize size =
           nsLayoutUtils::GetBorderRadiusForMenuDropShadow(view->GetFrame());
       if (size.width || size.height) {
-        int32_t width =
-            NSToIntRound(size.width * GetDesktopToDeviceScale().scale);
-        int32_t height =
-            NSToIntRound(size.height * GetDesktopToDeviceScale().scale);
+        int32_t width = NSToIntRound(size.width);
+        int32_t height = NSToIntRound(size.height);
         HRGN region = CreateRoundRectRgn(0, 0, mBounds.Width() + 1,
                                          mBounds.Height() + 1, width, height);
         if (!SetWindowRgn(mWnd, region, false)) {
@@ -5215,6 +5214,13 @@ bool nsWindow::ProcessMessageInternal(UINT msg, WPARAM& wParam, LPARAM& lParam,
         gfxDWriteFont::UpdateSystemTextVars();
         break;
       }
+      if (wParam == SPI_SETWORKAREA) {
+        // NB: We also refresh screens on WM_DISPLAYCHANGE but the rcWork
+        // values are sometimes wrong at that point.  This message then
+        // arrives soon afterward, when we can get the right rcWork values.
+        ScreenHelperWin::RefreshScreens();
+        break;
+      }
       if (auto lParamString = reinterpret_cast<const wchar_t*>(lParam)) {
         if (!wcscmp(lParamString, L"ImmersiveColorSet")) {
           // This affects system colors (-moz-win-accentcolor), so gotta pass
@@ -5934,10 +5940,6 @@ bool nsWindow::ProcessMessageInternal(UINT msg, WPARAM& wParam, LPARAM& lParam,
 
     case WM_DISPLAYCHANGE: {
       ScreenHelperWin::RefreshScreens();
-      nsCOMPtr<nsIGfxInfo> gfxInfo = components::GfxInfo::Service();
-      if (gfxInfo) {
-        gfxInfo->RefreshMonitors();
-      }
       if (mWidgetListener) {
         mWidgetListener->UIResolutionChanged();
       }

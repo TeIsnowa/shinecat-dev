@@ -323,6 +323,8 @@ const DEFAULT_ENVIRONMENT_PREFS = new Map([
   ["layers.prefer-d3d9", { what: RECORD_PREF_VALUE }],
   ["layers.prefer-opengl", { what: RECORD_PREF_VALUE }],
   ["layout.css.devPixelsPerPx", { what: RECORD_PREF_VALUE }],
+  ["media.gmp-gmpopenh264.lastUpdate", { what: RECORD_PREF_VALUE }],
+  ["media.gmp-manager.lastCheck", { what: RECORD_PREF_VALUE }],
   ["network.http.windows-sso.enabled", { what: RECORD_PREF_VALUE }],
   ["network.proxy.autoconfig_url", { what: RECORD_PREF_STATE }],
   ["network.proxy.http", { what: RECORD_PREF_STATE }],
@@ -376,7 +378,7 @@ const SEARCH_ENGINE_MODIFIED_TOPIC = "browser-search-engine-modified";
 const SEARCH_SERVICE_TOPIC = "browser-search-service";
 const SESSIONSTORE_WINDOWS_RESTORED_TOPIC = "sessionstore-windows-restored";
 const PREF_CHANGED_TOPIC = "nsPref:changed";
-const BLOCKLIST_LOADED_TOPIC = "plugin-blocklist-loaded";
+const GMP_PROVIDER_REGISTERED_TOPIC = "gmp-provider-registered";
 const AUTO_UPDATE_PREF_CHANGE_TOPIC =
   UpdateUtils.PER_INSTALLATION_PREFS["app.update.auto"].observerTopic;
 const BACKGROUND_UPDATE_PREF_CHANGE_TOPIC =
@@ -572,7 +574,7 @@ function EnvironmentAddonBuilder(environment) {
 
   // Have we added an observer to listen for blocklist changes that still needs to be
   // removed:
-  this._blocklistObserverAdded = false;
+  this._gmpProviderObserverAdded = false;
 
   // Set to true once initial load is complete and we're watching for changes.
   this._loaded = false;
@@ -596,7 +598,7 @@ EnvironmentAddonBuilder.prototype = {
       try {
         this._shutdownState = "Awaiting _updateAddons";
         // Gather initial addons details
-        await this._updateAddons(true);
+        await this._updateAddons();
 
         if (!this._environment._addonsAreFull) {
           // The addon database has not been loaded, wait for it to
@@ -655,9 +657,9 @@ EnvironmentAddonBuilder.prototype = {
   // nsIObserver
   observe(aSubject, aTopic, aData) {
     this._environment._log.trace("observe - Topic " + aTopic);
-    if (aTopic == BLOCKLIST_LOADED_TOPIC) {
-      Services.obs.removeObserver(this, BLOCKLIST_LOADED_TOPIC);
-      this._blocklistObserverAdded = false;
+    if (aTopic == GMP_PROVIDER_REGISTERED_TOPIC) {
+      Services.obs.removeObserver(this, GMP_PROVIDER_REGISTERED_TOPIC);
+      this._gmpProviderObserverAdded = false;
       let gmpPluginsPromise = this._getActiveGMPlugins();
       gmpPluginsPromise.then(
         gmpPlugins => {
@@ -709,8 +711,8 @@ EnvironmentAddonBuilder.prototype = {
   _shutdownBlocker() {
     if (this._loaded) {
       AddonManager.removeAddonListener(this);
-      if (this._blocklistObserverAdded) {
-        Services.obs.removeObserver(this, BLOCKLIST_LOADED_TOPIC);
+      if (this._gmpProviderObserverAdded) {
+        Services.obs.removeObserver(this, GMP_PROVIDER_REGISTERED_TOPIC);
       }
     }
 
@@ -728,21 +730,17 @@ EnvironmentAddonBuilder.prototype = {
    * This should only be called from _pendingTask; otherwise we risk
    * running this during addon manager shutdown.
    *
-   * @param {boolean} [atStartup]
-   *        True if this is the first check we're performing at startup. In that
-   *        situation, we defer some more expensive initialization.
-   *
    * @returns Promise<Object> This returns a Promise resolved with a status object with the following members:
    *   changed - Whether the environment changed.
    *   oldEnvironment - Only set if a change occured, contains the environment data before the change.
    */
-  async _updateAddons(atStartup) {
+  async _updateAddons() {
     this._environment._log.trace("_updateAddons");
 
     let addons = {
       activeAddons: await this._getActiveAddons(),
       theme: await this._getActiveTheme(),
-      activeGMPlugins: await this._getActiveGMPlugins(atStartup),
+      activeGMPlugins: await this._getActiveGMPlugins(),
     };
 
     let result = {
@@ -876,22 +874,18 @@ EnvironmentAddonBuilder.prototype = {
   /**
    * Get the GMPlugins data in object form.
    *
-   * @param {boolean} [atStartup]
-   *        True if this is the first check we're performing at startup. In that
-   *        situation, we defer some more expensive initialization.
-   *
    * @return Object containing the GMPlugins data.
    *
    * This should only be called from _pendingTask; otherwise we risk
    * running this during addon manager shutdown.
    */
-  async _getActiveGMPlugins(atStartup) {
+  async _getActiveGMPlugins() {
     // If we haven't yet loaded the blocklist, pass back dummy data for now,
     // and add an observer to update this data as soon as we get it.
-    if (atStartup || !Services.blocklist.isLoaded) {
-      if (!this._blocklistObserverAdded) {
-        Services.obs.addObserver(this, BLOCKLIST_LOADED_TOPIC);
-        this._blocklistObserverAdded = true;
+    if (!AddonManager.hasProvider("GMPProvider")) {
+      if (!this._gmpProviderObserverAdded) {
+        Services.obs.addObserver(this, GMP_PROVIDER_REGISTERED_TOPIC);
+        this._gmpProviderObserverAdded = true;
       }
       return {
         "dummy-gmp": {

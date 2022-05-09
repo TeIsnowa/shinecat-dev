@@ -15,6 +15,7 @@
 #include "mozilla/Assertions.h"
 #include "mozilla/CycleCollectedJSContext.h"
 #include "mozilla/DebugOnly.h"
+#include "mozilla/Fuzzing.h"
 #include "mozilla/IntentionalCrash.h"
 #include "mozilla/Logging.h"
 #include "mozilla/Monitor.h"
@@ -42,6 +43,10 @@
 
 #ifdef OS_WIN
 #  include "mozilla/gfx/Logging.h"
+#endif
+
+#ifdef FUZZING_SNAPSHOT
+#  include "mozilla/fuzzing/IPCFuzzController.h"
 #endif
 
 // Undo the damage done by mozzconf.h
@@ -559,12 +564,21 @@ int MessageChannel::DispatchingSyncMessageNestedLevel() const {
              : 0;
 }
 
+static const char* StringFromIPCSide(Side side) {
+  switch (side) {
+    case ChildSide:
+      return "Child";
+    case ParentSide:
+      return "Parent";
+    default:
+      return "Unknown";
+  }
+}
+
 static void PrintErrorMessage(Side side, const char* channelName,
                               const char* msg) {
-  const char* from = (side == ChildSide)
-                         ? "Child"
-                         : ((side == ParentSide) ? "Parent" : "Unknown");
-  printf_stderr("\n###!!! [%s][%s] Error: %s\n\n", from, channelName, msg);
+  printf_stderr("\n###!!! [%s][%s] Error: %s\n\n", StringFromIPCSide(side),
+                channelName, msg);
 }
 
 bool MessageChannel::Connected() const {
@@ -1500,9 +1514,52 @@ MessageChannel::MessageTask::MessageTask(MessageChannel* aChannel,
       mMonitor(aChannel->mMonitor),
       mChannel(aChannel),
       mMessage(std::move(aMessage)),
-      mScheduled(false) {}
+      mScheduled(false)
+#ifdef FUZZING_SNAPSHOT
+      ,
+      mFuzzStopped(false)
+#endif
+{
+
+#ifdef FUZZING_SNAPSHOT
+  if (mMessage.IsFuzzMsg()) {
+    MOZ_FUZZING_IPC_MT_CTOR();
+  }
+#endif
+}
+
+MessageChannel::MessageTask::~MessageTask() {
+#ifdef FUZZING_SNAPSHOT
+  // We track fuzzing messages until their run is complete. To make sure
+  // that we don't miss messages that are for some reason destroyed without
+  // being run (e.g. canceled), we catch this condition in the destructor.
+  if (mMessage.IsFuzzMsg() && !mFuzzStopped) {
+    MOZ_FUZZING_IPC_MT_STOP();
+  } else if (!mMessage.IsFuzzMsg() && !fuzzing::Nyx::instance().started()) {
+    MOZ_FUZZING_IPC_PRE_FUZZ_MT_STOP();
+  }
+#endif
+}
 
 nsresult MessageChannel::MessageTask::Run() {
+#ifdef FUZZING_SNAPSHOT
+  if (!mMessage.IsFuzzMsg()) {
+    if (fuzzing::Nyx::instance().started()) {
+      // Once we started fuzzing, prevent non-fuzzing tasks from being
+      // run and potentially blocking worker threads.
+      //
+      // TODO: This currently blocks all MessageTasks from running, not
+      // just those belonging to the target process pair. We currently
+      // do this for performance reasons, but it should be re-evaluated
+      // at a later stage when we found a better snapshot point.
+      return NS_OK;
+    }
+    // Record all running tasks prior to fuzzing, so we can wait for
+    // them to settle before snapshotting.
+    MOZ_FUZZING_IPC_PRE_FUZZ_MT_RUN();
+  }
+#endif
+
   mMonitor->AssertNotCurrentThreadOwns();
 
   // Drop the toplevel actor's lifecycle proxy outside of our monitor if we take
@@ -1524,6 +1581,13 @@ nsresult MessageChannel::MessageTask::Run() {
   mMonitor->AssertSameMonitor(*Channel()->mMonitor);
   proxy = Channel()->Listener()->GetLifecycleProxy();
   Channel()->RunMessage(proxy, *this);
+
+#ifdef FUZZING_SNAPSHOT
+  if (mMessage.IsFuzzMsg() && !mFuzzStopped) {
+    MOZ_FUZZING_IPC_MT_STOP();
+    mFuzzStopped = true;
+  }
+#endif
   return NS_OK;
 }
 
@@ -1544,6 +1608,13 @@ nsresult MessageChannel::MessageTask::Cancel() {
   }
 
   remove();
+
+#ifdef FUZZING_SNAPSHOT
+  if (mMessage.IsFuzzMsg() && !mFuzzStopped) {
+    MOZ_FUZZING_IPC_MT_STOP();
+    mFuzzStopped = true;
+  }
+#endif
 
   return NS_OK;
 }
@@ -1823,10 +1894,13 @@ void MessageChannel::ReportConnectionError(const char* aFunctionName,
       MOZ_CRASH("unreached");
   }
 
-  char reason[512];
-  SprintfLiteral(reason, "%s(msgname=%s) %s", aFunctionName,
-                 IPC::StringFromIPCMessageType(aMsgType), errorMsg);
-  PrintErrorMessage(mSide, mName, reason);
+  // IPC connection errors are fairly common, especially "Channel closing: too
+  // late to send/recv, messages will be lost", so shouldn't be being reported
+  // on release builds, as that's misleading as to their severity.
+  NS_WARNING(nsPrintfCString("IPC Connection Error: [%s][%s] %s(msgname=%s) %s",
+                             StringFromIPCSide(mSide), mName, aFunctionName,
+                             IPC::StringFromIPCMessageType(aMsgType), errorMsg)
+                 .get());
 
   MonitorAutoUnlock unlock(*mMonitor);
   mListener->ProcessingError(MsgDropped, errorMsg);

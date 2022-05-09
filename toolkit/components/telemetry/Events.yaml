@@ -507,9 +507,9 @@ creditcard:
       - "update"
       - "cancel"
       - "disable"
-    bug_numbers: [1653073, 1653083, 1720608]
-    notification_emails: ["tgiles@mozilla.com", "dlee@mozilla.com"]
-    expiry_version: "103"
+    bug_numbers: [1653073, 1653083, 1720608, 1767907]
+    notification_emails: ["sgalich@mozilla.com", "dlee@mozilla.com"]
+    expiry_version: never
     products:
       - "firefox"
     record_in_processes: ["main"]
@@ -525,9 +525,9 @@ creditcard:
       - "delete"
       - "show_entry"
       - "edit"
-    bug_numbers: [1653073, 1654167, 1720608]
-    notification_emails: ["tgiles@mozilla.com", "dlee@mozilla.com"]
-    expiry_version: "103"
+    bug_numbers: [1653073, 1654167, 1720608, 1767907]
+    notification_emails: ["sgalich@mozilla.com", "dlee@mozilla.com"]
+    expiry_version: never
     products:
       - "firefox"
     record_in_processes: ["main"]
@@ -543,9 +543,9 @@ creditcard:
       - "filled"
       - "filled_modified"
       - "submitted"
-    bug_numbers: [1653073, 1653162, 1720608]
-    notification_emails: ["tgiles@mozilla.com", "dlee@mozilla.com"]
-    expiry_version: "103"
+    bug_numbers: [1653073, 1653162, 1720608, 1767907]
+    notification_emails: ["sgalich@mozilla.com", "dlee@mozilla.com"]
+    expiry_version: never
     products:
       - "firefox"
     record_in_processes: ["content"]
@@ -2548,25 +2548,6 @@ pictureinpicture:
     extra_keys:
       width: The width that the window was resized to
       height: The height that the window was resize to
-    notification_emails:
-      - mconley@mozilla.com
-    products:
-      - "firefox"
-    record_in_processes:
-      - main
-    bug_numbers:
-      - 1560590
-      - 1678202
-      - 1730039
-    expiry_version: "never"
-    release_channel_collection: opt-out
-  move:
-    objects: ["player"]
-    description: >
-      Recorded when the Picture-in-Picture player window is moved.
-    extra_keys:
-      screenX: The screen X coordinate that the window was moved to
-      screenY: The screen Y coordinate that the window was moved to
     notification_emails:
       - mconley@mozilla.com
     products:

@@ -1320,12 +1320,6 @@
   mirror: always
   rust: true
 
-- name: browser.proton.places-tooltip.enabled
-  type: RelaxedAtomicBool
-  value: false
-  mirror: always
-  rust: true
-
 # Blocked plugin content
 - name: browser.safebrowsing.blockedURIs.enabled
   type: bool
@@ -1913,7 +1907,7 @@
 # Block sandboxed BrowsingContexts from navigating to external protocols.
 - name: dom.block_external_protocol_navigation_from_sandbox
   type: bool
-  value: @IS_NIGHTLY_BUILD@
+  value: true
   mirror: always
 
 # Block Insecure downloads from Secure Origins
@@ -2212,13 +2206,7 @@
   value: true
   mirror: always
 
-# Disable clipboard.read() by default
-- name: dom.events.asyncClipboard.read
-  type: bool
-  value: false
-  mirror: always
-
-# Disable ClipboardItem and clipboard.write by default
+# Disable clipboard.read(), clipboard.write() and ClipboardItem by default
 - name: dom.events.asyncClipboard.clipboardItem
   type: bool
   value: false
@@ -2795,6 +2783,12 @@
 - name: dom.moduleScripts.enabled
   type: bool
   value: true
+  mirror: always
+
+# Is support for import maps (<script type="importmap">) enabled for content?
+- name: dom.importMaps.enabled
+  type: bool
+  value: false
   mirror: always
 
 # Whether we disable triggering mutation events for changes to style
@@ -3577,11 +3571,15 @@
   value: 25 * 1024
   mirror: always
 
-# Whether or not LSNG (Next Generation Local Storage) is enabled.
-# See bug 1599979 for enabling this unconditionally (second attempt).
-- name: dom.storage.next_gen
+# Whether or not the unsupported legacy implemenation should be enabled. Please
+# don't advertise this pref as a way for disabling LSNG. This pref is intended
+# for internal testing only and will be removed in near future. Accidental
+# disabling of LSNG can lead to a data loss in a combination with disabled
+# shadow writes. Disabling of shadow writes is the initial step towards
+# removing legacy implementation and will be done soon.
+- name: dom.storage.enable_unsupported_legacy_implementation
   type: RelaxedAtomicBool
-  value: true
+  value: false
   mirror: always
   do_not_use_directly: true
 
@@ -3648,7 +3646,7 @@
 
 - name: dom.streams.byte_streams.enabled
   type: RelaxedAtomicBool
-  value: false
+  value: true
   mirror: always
 
 - name: dom.streams.writable_streams.enabled
@@ -3696,22 +3694,22 @@
   mirror: always
 
 - name: dom.textMetrics.actualBoundingBox.enabled
-  type: bool
+  type: RelaxedAtomicBool
   value: true
   mirror: always
 
 - name: dom.textMetrics.baselines.enabled
-  type: bool
+  type: RelaxedAtomicBool
   value: false
   mirror: always
 
 - name: dom.textMetrics.emHeight.enabled
-  type: bool
+  type: RelaxedAtomicBool
   value: false
   mirror: always
 
 - name: dom.textMetrics.fontBoundingBox.enabled
-  type: bool
+  type: RelaxedAtomicBool
   value: false
   mirror: always
 
@@ -4880,7 +4878,11 @@
 #ifdef FUZZING
 -   name: fuzzing.enabled
     type: bool
+#ifdef FUZZING_SNAPSHOT
+    value: true
+#else
     value: false
+#endif
     mirror: always
 
 -   name: fuzzing.necko.enabled
@@ -5411,6 +5413,13 @@
   type: bool
   value: true
   mirror: once
+
+# Do we fire a notification about missing fonts, so the front-end can decide
+# whether to try and do something about it (e.g. download additional fonts)?
+- name: gfx.missing_fonts.notify
+  type: RelaxedAtomicBool
+  value: false
+  mirror: always
 
 #if !defined(MOZ_WIDGET_ANDROID)
 - name: gfx.egl.prefer-gles.enabled
@@ -6681,7 +6690,7 @@
 
 - name: javascript.options.wasm_caching
   type: bool
-  value: false
+  value: true
   mirror: always
 
 # The amount of time we wait between a request to GC (due to leaving a page) and doing the actual GC, in ms.
@@ -8355,6 +8364,12 @@
 - name: layout.use-plugin-fallback
   type: bool
   value: false
+  mirror: always
+
+# Whether to draw images in CSS backgrounds if we only have a partial frame.
+- name: layout.display_partial_background_images
+  type: bool
+  value: @IS_NIGHTLY_BUILD@
   mirror: always
 
 #---------------------------------------------------------------------------
@@ -11928,7 +11943,7 @@
   # true means win32k system calls are not permitted.
 -   name: security.sandbox.content.win32k-disable
     type: RelaxedAtomicBool
-    value: @IS_EARLY_BETA_OR_EARLIER@
+    value: true
     mirror: always
 
   # Note: win32k is currently _not_ disabled for GMP due to intermittent test
@@ -12048,6 +12063,13 @@
 # Cancel outgoing requests from SystemPrincipal:
 # but only with scheme http(s) and contentpolicytype stylesheet
 - name: security.disallow_privileged_https_stylesheet_loads
+  type: bool
+  value: true
+  mirror: always
+
+# Cancel outgoing requests from SystemPrincipal:
+# but only with scheme http(s) and contentpolicytype script
+- name: security.disallow_privileged_https_script_loads
   type: bool
   value: true
   mirror: always
@@ -12670,6 +12692,11 @@
   value: true
   mirror: always
 
+- name: webgl.colorspaces.prototype
+  type: RelaxedAtomicBool
+  value: false
+  mirror: always
+
 - name: webgl.debug.incomplete-tex-color
   type: RelaxedAtomicUint32
   value: 0
@@ -13290,11 +13317,6 @@
 - name: widget.swipe.velocity-twitch-tolerance
   type: float
   value: 0.0000001f
-  mirror: always
-
-- name: widget.swipe.success-threshold
-  type: float
-  value: 0.25f
   mirror: always
 
 - name: widget.swipe.success-velocity-contribution

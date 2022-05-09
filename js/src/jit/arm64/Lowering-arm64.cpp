@@ -220,14 +220,14 @@ void LIRGeneratorARM64::lowerWasmBuiltinTruncateToInt32(
 
   if (opd->type() == MIRType::Double) {
     define(new (alloc()) LWasmBuiltinTruncateDToInt32(
-               useRegister(opd), useFixed(ins->tls(), InstanceReg),
+               useRegister(opd), useFixed(ins->instance(), InstanceReg),
                LDefinition::BogusTemp()),
            ins);
     return;
   }
 
   define(new (alloc()) LWasmBuiltinTruncateFToInt32(
-             useRegister(opd), useFixed(ins->tls(), InstanceReg),
+             useRegister(opd), useFixed(ins->instance(), InstanceReg),
              LDefinition::BogusTemp()),
          ins);
 }
@@ -983,7 +983,9 @@ void LIRGenerator::visitCopySign(MCopySign* ins) {
   }
 
   lir->setOperand(0, useRegisterAtStart(lhs));
-  lir->setOperand(1, useRegisterAtStart(rhs));
+  lir->setOperand(1, willHaveDifferentLIRNodes(lhs, rhs)
+                         ? useRegister(rhs)
+                         : useRegisterAtStart(rhs));
   // The copySignDouble and copySignFloat32 are optimized for lhs == output.
   // It also prevents rhs == output when lhs != output, avoids clobbering.
   defineReuseInput(lir, ins, 0);

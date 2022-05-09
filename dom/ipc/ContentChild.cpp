@@ -110,7 +110,7 @@
 #include "mozilla/layers/ContentProcessController.h"
 #include "mozilla/layers/ImageBridgeChild.h"
 #ifdef NS_PRINTING
-#include "mozilla/layout/RemotePrintJobChild.h"
+#  include "mozilla/layout/RemotePrintJobChild.h"
 #endif
 #include "mozilla/loader/ScriptCacheActors.h"
 #include "mozilla/media/MediaChild.h"
@@ -3621,6 +3621,15 @@ mozilla::ipc::IPCResult ContentChild::RecvCrossProcessRedirect(
     HttpBaseChannel::ConfigureReplacementChannel(
         newChannel, config,
         HttpBaseChannel::ReplacementReason::DocumentChannel);
+  }
+
+  if (aArgs.contentDisposition()) {
+    newChannel->SetContentDisposition(*aArgs.contentDisposition());
+  }
+
+  if (aArgs.contentDispositionFilename()) {
+    newChannel->SetContentDispositionFilename(
+        *aArgs.contentDispositionFilename());
   }
 
   if (nsCOMPtr<nsIChildChannel> childChannel = do_QueryInterface(newChannel)) {

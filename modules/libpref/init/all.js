@@ -95,8 +95,8 @@ pref("security.OCSP.timeoutMilliseconds.hard", 10000);
 pref("security.pki.cert_short_lifetime_in_days", 10);
 // NB: Changes to this pref affect CERT_CHAIN_SHA1_POLICY_STATUS telemetry.
 // See the comment in CertVerifier.cpp.
-// 3 = only allow SHA-1 for certificates issued by an imported root.
-pref("security.pki.sha1_enforcement_level", 3);
+// 1 = forbid sha1 in certificate signatures, even for imported roots
+pref("security.pki.sha1_enforcement_level", 1);
 
 // This preference controls what signature algorithms are accepted for signed
 // apps (i.e. add-ons). The number is interpreted as a bit mask with the
@@ -398,11 +398,7 @@ pref("media.decoder-doctor.verbose", false);
 pref("media.decoder-doctor.new-issue-endpoint", "https://webcompat.com/issues/new");
 
 pref("media.videocontrols.picture-in-picture.enabled", false);
-#ifdef NIGHTLY_BUILD
 pref("media.videocontrols.picture-in-picture.display-text-tracks.enabled", true);
-#else
-pref("media.videocontrols.picture-in-picture.display-text-tracks.enabled", false);
-#endif
 pref("media.videocontrols.picture-in-picture.video-toggle.enabled", false);
 pref("media.videocontrols.picture-in-picture.video-toggle.always-show", false);
 pref("media.videocontrols.picture-in-picture.video-toggle.min-video-secs", 45);
@@ -591,10 +587,6 @@ pref("gfx.downloadable_fonts.fallback_delay_short", 100);
 // disable downloadable font cache so that behavior is consistently
 // the uncached load behavior across pages (useful for testing reflow problems)
 pref("gfx.downloadable_fonts.disable_cache", false);
-
-// Do we fire a notification about missing fonts, so the front-end can decide
-// whether to try and do something about it (e.g. download additional fonts)?
-pref("gfx.missing_fonts.notify", false);
 
 // whether to always search all font cmaps during system font fallback
 pref("gfx.font_rendering.fallback.always_use_cmaps", false);
@@ -942,6 +934,11 @@ pref("browser.fixup.fallback-to-https", true);
 // used in this case.  See nsPrintSettingsService::InitPrintSettingsFromPrefs
 // for the restrictions on which prefs can act as defaults.
 
+// Whether we directly use the system print dialog to collect the user's print
+// settings rather than using the tab-modal print preview dialog.
+// Note: `print.always_print_silent` overrides this.
+pref("print.prefer_system_dialog", false);
+
 // Print/Preview Shrink-To-Fit won't shrink below 20% for text-ish documents.
 pref("print.shrink-to-fit.scale-limit-percent", 20);
 
@@ -1026,8 +1023,12 @@ pref("dom.forms.datetime.timepicker", false);
 // Enable search in <select> dropdowns (more than 40 options)
 pref("dom.forms.selectSearch", false);
 // Allow for webpages to provide custom styling for <select>
-// popups. Disabled on GTK due to bug 1338283.
-#ifdef MOZ_WIDGET_GTK
+// popups.
+//
+// Disabled on GTK (originally due to bug 1338283, but not enabled since, and
+// native appearance might be preferred).
+// Disabled on macOS because native appearance is preferred, see bug 1703866.
+#if defined(MOZ_WIDGET_GTK) || defined(XP_MACOSX)
   pref("dom.forms.select.customstyling", false);
 #else
   pref("dom.forms.select.customstyling", true);
@@ -1914,7 +1915,7 @@ pref("font.cjk_pref_fallback_order",        "zh-cn,zh-hk,zh-tw,ja,ko");
 pref("intl.uidirection", -1); // -1 to set from locale; 0 for LTR; 1 for RTL
 
 // This pref controls pseudolocales for testing localization.
-// See https://firefox-source-docs.mozilla.org/l10n/fluent/tutorial.html#pseudolocalization.
+// See https://firefox-source-docs.mozilla.org/l10n/fluent/tutorial.html#manually-testing-ui-with-pseudolocalization
 pref("intl.l10n.pseudo", "");
 
 // use en-US hyphenation by default for content tagged with plain lang="en"
@@ -2427,6 +2428,8 @@ pref("dom.ipc.plugins.forcedirect.enabled", true);
 // Enable multi by default.
 #if !defined(MOZ_ASAN) && !defined(MOZ_TSAN)
   pref("dom.ipc.processCount", 8);
+#elif defined(FUZZING_SNAPSHOT)
+  pref("dom.ipc.processCount", 1);
 #else
   pref("dom.ipc.processCount", 4);
 #endif
@@ -4426,11 +4429,7 @@ pref("services.common.log.logger.tokenserverclient", "Debug");
   // 1: WebDriver BiDi
   // 2: CDP (Chrome DevTools Protocol)
   // 3: WebDriver BiDi + CDP
-  #if defined(NIGHTLY_BUILD)
-    pref("remote.active-protocols", 3);
-  #else
-    pref("remote.active-protocols", 2);
-  #endif
+  pref("remote.active-protocols", 3);
 
   // Defines the verbosity of the internal logger.
   //
